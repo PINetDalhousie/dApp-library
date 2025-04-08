@@ -8,12 +8,13 @@ __author__ = "Andrea Lacava"
 import multiprocessing
 import time
 import numpy as np
+import threading
 # np.set_printoptions(threshold=sys.maxsize)
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
 
-class SpectrumSharingDApp(DApp):
+class SpectrumSharingDAppMulti(DApp):
 
     ###  Configuration ###
     # gNB runs with BW = 40 MHz, with -E (3/4 sampling)
@@ -26,7 +27,7 @@ class SpectrumSharingDApp(DApp):
     # We receive the symbols and average them over some frames, and do thresholding.
 
     def __init__(self, id: int = 1, noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'uds', **kwargs):
-        super().__init__(link=link, transport=transport, **kwargs) 
+        super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
         self.center_freq = 3.6192e9 # Center frequency in Hz
@@ -52,6 +53,14 @@ class SpectrumSharingDApp(DApp):
         self.control_count = 1
         self.abs_iq_av = np.zeros(self.FFT_SIZE)
 
+
+        # Number of threads to be run to process the IQ samples
+        # Simulates having multiple dApps running simultaneously
+        self.n_threads = 1
+
+        self.id = id
+        print(f"ID {id}")
+
         if self.energyGui:
             from visualization.energy import EnergyPlotter
             self.sig_queue = multiprocessing.Queue() 
@@ -70,8 +79,46 @@ class SpectrumSharingDApp(DApp):
             classifier = kwargs.get('classifier', None)
             self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
 
-    def get_iqs_from_ran(self, data):
-        dapp_logger.debug(f'Triggered callback')
+    def process_iqs(self, thread_id=0, seq_number=0):
+        abs_iq_av_db =  20 * np.log10(1 + (self.abs_iq_av/(self.Average_over_frames)))
+        abs_iq_av_db_offset_correct = np.append(abs_iq_av_db[self.First_carrier_offset:self.FFT_SIZE],abs_iq_av_db[0:self.First_carrier_offset])
+        #dapp_logger.info(f'--- AVG VALUES ----')
+        #dapp_logger.info(f'abs_iq_av_db_offset_correct: {abs_iq_av_db_offset_correct.mean()}')
+        #dapp_logger.info(f'--- MAX VALUES ----')
+        #dapp_logger.info(f'abs_iq_av_db_offset_correct: {abs_iq_av_db_offset_correct.max()}')
+        # last_5_max_abs_iq_av_db_offset_correct = np.sort(abs_iq_av_db_offset_correct)[-20:]
+        # dapp_logger.info(f'Last 20 max values (abs_iq_av_db_offset_correct): {last_5_max_abs_iq_av_db_offset_correct}')
+        dapp_logger.info(f"FINISHED PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
+
+        # PRB blocking based on the noise floor threshold
+        f_ind = np.arange(self.FFT_SIZE)
+        blklist_sub_carrier = f_ind[abs_iq_av_db_offset_correct > self.noise_floor_threshold]
+        np.sort(blklist_sub_carrier)
+        #dapp_logger.info(f'blklist_sub_carrier: {blklist_sub_carrier}')
+        prb_blk_list = np.unique((np.floor(blklist_sub_carrier/self.Num_car_prb))).astype(np.uint16)
+        #dapp_logger.info(f'prb_blk_list: {prb_blk_list}')
+        prb_blk_list = prb_blk_list[prb_blk_list > self.prb_thrs]
+        # prb_blk_list = np.array([76, 77,  78,  79, 80, 81, 82, 83], dtype=np.uint16) # 76, 77,  78,  79, 80, 81, 82, 83
+        # prb_blk_list = np.arange(start=76, stop=140, dtype=np.uint16)
+        #dapp_logger.info(f"Blacklisted prbs ({prb_blk_list.size}): {prb_blk_list}")
+        prb_new = prb_blk_list.view(prb_blk_list.dtype.newbyteorder('>'))
+        
+        # Create the payload
+        size = prb_blk_list.size.to_bytes(2,'little')
+        prbs_to_send = prb_new.tobytes(order="C")
+        te = time.time()
+        
+        # Schedule the delivery
+        dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")
+        self.e3_interface.schedule_control(size+prbs_to_send)
+
+        if self.energyGui:
+            self.sig_queue.put(abs_iq_av_db)
+        
+        if self.dashboard:
+            self.demo_queue.put(("prb_list", prb_blk_list))
+
+    def get_iqs_from_ran(self, data, seq_number):
         if self.save_iqs:
             dapp_logger.debug("I will write on the logfile iqs")
             self.save_counter += 1
@@ -80,9 +127,11 @@ class SpectrumSharingDApp(DApp):
             if self.save_counter > self.limit_per_file:
                 self.iq_save_file.close()
                 self.iq_save_file = open(f"{LOG_DIR}/iqs_{int(time.time())}.bin", "ab")
+
+        dapp_logger.info(f"PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
+
                
-        iq_arr = np.frombuffer(data, dtype=np.int16)
-        dapp_logger.debug(f"Shape of iq_arr {iq_arr.shape}")
+        iq_arr = np.frombuffer(data, dtype=np.int16)[:-2]
         
         if self.iqPlotterGui:
             self.iq_queue.put(iq_arr)
@@ -91,53 +140,27 @@ class SpectrumSharingDApp(DApp):
             self.demo_queue.put(("iq_data", iq_arr))
 
         if self.control:
-            dapp_logger.debug("Start control operations")
+            #dapp_logger.debug("Start control operations")
             iq_comp = iq_arr[::2] + iq_arr[1::2] * 1j
-            dapp_logger.debug(f"Shape of iq_comp {iq_comp.shape}")
+            #dapp_logger.debug(f"Shape of iq_comp {iq_comp.shape}")
             abs_iq = np.abs(iq_comp).astype(float)
-            dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
+            #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
             self.abs_iq_av += abs_iq
             self.control_count += 1
-            dapp_logger.debug(f"Control count is: {self.control_count}")
+            #dapp_logger.debug(f"Control count is: {self.control_count}")
 
             if self.control_count == self.Average_over_frames:
-                ts = time.time()
-                abs_iq_av_db =  20 * np.log10(1 + (self.abs_iq_av/(self.Average_over_frames)))
-                abs_iq_av_db_offset_correct = np.append(abs_iq_av_db[self.First_carrier_offset:self.FFT_SIZE],abs_iq_av_db[0:self.First_carrier_offset])
-                dapp_logger.info(f'--- AVG VALUES ----')
-                dapp_logger.info(f'abs_iq_av_db_offset_correct: {abs_iq_av_db_offset_correct.mean()}')
-                dapp_logger.info(f'--- MAX VALUES ----')
-                dapp_logger.info(f'abs_iq_av_db_offset_correct: {abs_iq_av_db_offset_correct.max()}')
-                # last_5_max_abs_iq_av_db_offset_correct = np.sort(abs_iq_av_db_offset_correct)[-20:]
-                # dapp_logger.info(f'Last 20 max values (abs_iq_av_db_offset_correct): {last_5_max_abs_iq_av_db_offset_correct}')
+                '''
+                threads = []
+                for i in range(self.n_threads):
+                    thread = threading.Thread(target=self.process_iqs, args=(i,))
+                    threads.append(thread)
+                    thread.start()
 
-                # PRB blocking based on the noise floor threshold
-                f_ind = np.arange(self.FFT_SIZE)
-                blklist_sub_carrier = f_ind[abs_iq_av_db_offset_correct > self.noise_floor_threshold]
-                np.sort(blklist_sub_carrier)
-                dapp_logger.info(f'blklist_sub_carrier: {blklist_sub_carrier}')
-                prb_blk_list = np.unique((np.floor(blklist_sub_carrier/self.Num_car_prb))).astype(np.uint16)
-                dapp_logger.info(f'prb_blk_list: {prb_blk_list}')
-                prb_blk_list = prb_blk_list[prb_blk_list > self.prb_thrs]
-                # prb_blk_list = np.array([76, 77,  78,  79, 80, 81, 82, 83], dtype=np.uint16) # 76, 77,  78,  79, 80, 81, 82, 83
-                # prb_blk_list = np.arange(start=76, stop=140, dtype=np.uint16)
-                dapp_logger.info(f"Blacklisted prbs ({prb_blk_list.size}): {prb_blk_list}")
-                prb_new = prb_blk_list.view(prb_blk_list.dtype.newbyteorder('>'))
-                
-                # Create the payload
-                size = prb_blk_list.size.to_bytes(2,'little')
-                prbs_to_send = prb_new.tobytes(order="C")
-                
-                # Schedule the delivery
-                self.e3_interface.schedule_control(size+prbs_to_send)
-                te = time.time()
-                dapp_logger.info(f"EXECUTION TIME: {(te-ts)*1e3}")
-
-                if self.energyGui:
-                    self.sig_queue.put(abs_iq_av_db)
-                
-                if self.dashboard:
-                    self.demo_queue.put(("prb_list", prb_blk_list))
+                for thread in threads:
+                    thread.join() 
+                '''
+                self.process_iqs(self.id, seq_number)
 
                 # Reset the variables
                 self.abs_iq_av = np.zeros(self.FFT_SIZE)

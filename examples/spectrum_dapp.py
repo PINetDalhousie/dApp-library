@@ -9,18 +9,18 @@ import os
 import time
 
 from e3interface.e3_connector import E3LinkLayer, E3TransportLayer
-from spectrum.spectrum_dapp import SpectrumSharingDApp
+from spectrum.spectrum_dapp_multithread import SpectrumSharingDAppMulti
 
 LOG_DIR = ('.' if os.geteuid() != 0 else '') + '/logs/'
 
-def stop_program(time_to_wait, dapp: SpectrumSharingDApp):
+def stop_program(time_to_wait, dapp: SpectrumSharingDAppMulti):
     time.sleep(time_to_wait)
     print("Stop is called")
     dapp.stop()
     time.sleep(0.5) # to allow proper closure of the dApp threads, irrelevant to profiling
     print("Test completed")
 
-def main(args, time_to_wait: float = 60.0):
+def main(args, time_to_wait: float = 300.0):
     # with open(f"{LOG_DIR}/busy.txt", "w") as f:
     #     f.close()
 
@@ -33,7 +33,7 @@ def main(args, time_to_wait: float = 60.0):
 
     print(f'Threshold {noise_floor_threshold}')
     
-    dapp = SpectrumSharingDApp(noise_floor_threshold=noise_floor_threshold, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
+    dapp = SpectrumSharingDAppMulti(noise_floor_threshold=noise_floor_threshold, id=args.id, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
                 energyGui=args.energy_gui, iqPlotterGui=args.iq_plotter_gui, dashboard=args.demo_gui)
     dapp.setup_connection()
     
@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument('--iq-plotter-gui', action='store_true', default=False, help="Set whether to enable the IQ Plotter GUI")
     parser.add_argument('--demo-gui', action='store_true', default=False, help="Set whether to enable the Demo GUI")
     parser.add_argument('--timed', action='store_true', default=False, help="Run with a 5-minute time limit")
+    parser.add_argument('--id', type=str,  default='1', help="Specify dApp ID")
 
     args = parser.parse_args()
 

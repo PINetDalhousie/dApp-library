@@ -4,7 +4,8 @@ from enum import Enum
 import os
 import socket
 import zmq
-from .e3_logging import e3_logger, LOG_DIR
+import time
+from .e3_logging import e3_logger, LOG_DIR, dapp_logger
 
 
 class E3LinkLayer(Enum):
@@ -125,19 +126,19 @@ class ZMQConnector(E3Connector):
         while request_retries > 0:
             setup_socket = self.setup_context.socket(zmq.REQ)
             setup_socket.connect(self.setup_endpoint)
-            e3_logger.debug("Send E3 Setup request")
+            #e3_logger.debug("Send E3 Setup request")
             setup_socket.send(payload)
 
             if (setup_socket.poll(request_timeout) & zmq.POLLIN) != 0:
                 reply = setup_socket.recv()
-                e3_logger.debug('ZMQ setup socket replied')
+                #e3_logger.debug('ZMQ setup socket replied')
                 return reply
             
             request_retries -= 1
-            e3_logger.error("ZMQ setup did not reply")
+            #e3_logger.error("ZMQ setup did not reply")
             setup_socket.setsockopt(zmq.LINGER, 0)
             setup_socket.close()
-            e3_logger.debug('Retrying to connect')
+            #e3_logger.debug('Retrying to connect')
         
         raise ConnectionRefusedError('E3 Setup request procedure did not went through')
         
@@ -154,16 +155,20 @@ class ZMQConnector(E3Connector):
 
     def receive(self) -> bytes:
         # The commented part should be decommented for measuring the effective performance of the control loop
-        # start_time = time.perf_counter()
-        # while True:
-            
+        #start_time = time.perf_counter()
+        #while True:
+        #    
         #     # Poll the socket without blocking
-        #     events = dict(self.poller.poll(0))
-            
-        #     if self.inbound_socket in events and events[self.inbound_socket] == zmq.POLLIN:
-        #         with open(f"{LOG_DIR}/busy.txt", "a") as f:
-        #             print(f"{time.perf_counter() - start_time}", file=f)
-                return self.inbound_socket.recv()
+        #    events = dict(self.poller.poll(0))
+        #    
+        #    if self.inbound_socket in events and events[self.inbound_socket] == zmq.POLLIN:
+        #        with open(f"{LOG_DIR}/busy.txt", "a") as f:
+        #            print(f"{time.perf_counter() - start_time}", file=f)
+                rec = self.inbound_socket.recv()
+                seq_number = int.from_bytes(bytes.fromhex(rec.hex()[14:18]), byteorder="little")
+                rec = rec[:7] + rec[9:]
+                dapp_logger.info(f"RECEIVED IQs | Sequence Number {seq_number}")
+                return rec,seq_number
         
 
     def setup_outbound_connection(self):
@@ -174,6 +179,7 @@ class ZMQConnector(E3Connector):
             os.chmod(self.DAPP_IPC_SOCKET_PATH, 0o666)
     
     def send(self, payload: bytes):
+        dapp_logger.info(f"SEND CONTROL")
         self.outbound_socket.send(payload)
 
     def dispose(self):
@@ -190,9 +196,9 @@ class POSIXConnector(E3Connector):
     def __init__(self, transport_layer: E3TransportLayer):   
         match transport_layer:
             case E3TransportLayer.SCTP | E3TransportLayer.TCP:
-                self.setup_endpoint = ("127.0.0.1", 9990)
-                self.inbound_endpoint = ("127.0.0.1", 9991)
-                self.outbound_endpoint = ("127.0.0.1", 9999)
+                self.setup_endpoint = ("192.168.70.161", 9990)
+                self.inbound_endpoint = ("0.0.0.0", 9991)
+                self.outbound_endpoint = ("192.168.70.161", 9999)
             
             case E3TransportLayer.IPC: 
                 self.setup_endpoint = self.E3_IPC_SETUP_PATH
@@ -233,7 +239,7 @@ class POSIXConnector(E3Connector):
         try:
             setup_socket.connect(self.setup_endpoint)
             setup_socket.send(payload)
-            reply = self.receive_in_chunks(setup_socket)
+            reply,_ = self.receive_in_chunks(setup_socket)
         finally:
             setup_socket.close()
             
@@ -248,6 +254,7 @@ class POSIXConnector(E3Connector):
     def receive_in_chunks(self, conn):
         data = bytearray()
         chunks = 0
+        seq_number = -1
 
         # Receive the size of the buffer first
         raw_size = conn.recv(4)
@@ -255,30 +262,36 @@ class POSIXConnector(E3Connector):
             e3_logger.error("Failed to receive buffer size")
             return None
         buffer_size = struct.unpack("!I", raw_size)[0]
-        e3_logger.debug(f"buffer size is {buffer_size}")
+        #e3_logger.debug(f"buffer size is {buffer_size}")
 
         # Receive the buffer in chunks
-        while len(data) < buffer_size:
+        while len(data) < buffer_size-2:
             remaining = buffer_size - len(data)
             chunk = conn.recv(min(self.CHUNK_SIZE, remaining))
+            if(chunks == 0 and len(chunk) > 4):
+                seq_number = int.from_bytes(bytes.fromhex(chunk.hex()[14:18]), byteorder="little")
+                chunk = chunk[:7] + chunk[9:]
             if not chunk:
                 e3_logger.error("Connection closed unexpectedly")
                 return None  # Connection closed unexpectedly
             data.extend(chunk)
             chunks += 1
 
-        e3_logger.debug(f"Chunks recv {chunks}")
-        e3_logger.debug(f"Total size recv {len(data)}")
-        return bytes(data)
+        #e3_logger.debug(f"Chunks recv {chunks}")
+        #e3_logger.debug(f"Total size recv {len(data)}")
+        return bytes(data), seq_number
     
     def receive(self) -> bytes:
-        return self.receive_in_chunks(self.inbound_connection) 
+        data,seq_number = self.receive_in_chunks(self.inbound_connection) 
+        dapp_logger.info(f"RECEIVED IQs | Sequence Number {seq_number}")
+        return data,seq_number
 
     def setup_outbound_connection(self):
         self.outbound_socket = self._create_socket()
         self.outbound_socket.connect(self.outbound_endpoint)
 
     def send(self, payload: bytes):
+        dapp_logger.info(f"SEND CONTROL")
         self.outbound_socket.send(payload)
     
     def dispose(self):
