@@ -22,7 +22,7 @@ class DApp(ABC):
     def __init__(self, id: int = 1, link: str = 'posix', transport:str = 'uds', callbacks: list = [], **kwargs):
         super().__init__()
         self.dapp_id = id
-        self.e3_interface = E3Interface(link=link, transport=transport)
+        self.e3_interface = E3Interface(link=link, transport=transport, id=id)
         self.stop_event = multiprocessing.Event()
 
         dapp_logger.info(f'Using {link} and {transport}')

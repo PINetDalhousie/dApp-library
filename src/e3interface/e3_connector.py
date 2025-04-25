@@ -4,7 +4,8 @@ from enum import Enum
 import os
 import socket
 import zmq
-from .e3_logging import e3_logger, LOG_DIR
+import time
+from .e3_logging import e3_logger, LOG_DIR, dapp_logger
 
 
 class E3LinkLayer(Enum):
@@ -52,7 +53,7 @@ class E3Connector(ABC):
     DAPP_IPC_SOCKET_PATH = f"{IPC_BASE_DIR}/dapp_socket" # outbound
 
     @staticmethod
-    def setup_connector(link_layer: str, transport_layer: str):
+    def setup_connector(link_layer: str, transport_layer: str, id: int):
         link_layer = E3LinkLayer.from_string(link_layer)
         transport_layer = E3TransportLayer.from_string(transport_layer)
         
@@ -64,9 +65,9 @@ class E3Connector(ABC):
             )
             
         if link_layer == E3LinkLayer.POSIX:
-            return POSIXConnector(transport_layer)
+            return POSIXConnector(transport_layer, id)
         else:
-            return ZMQConnector(transport_layer)
+            return ZMQConnector(transport_layer, id)
     
     @abstractmethod
     def send_setup_request(self, payload):
@@ -92,13 +93,13 @@ class E3Connector(ABC):
     @abstractmethod 
     def dispose(self):
         pass
-      
+     
 class ZMQConnector(E3Connector):
     setup_context: zmq.Context
     inbound_context: zmq.Context
     outbound_context: zmq.Context
 
-    def __init__(self, transport_layer: E3TransportLayer):
+    def __init__(self, transport_layer: E3TransportLayer, id: int):
         self.setup_context = zmq.Context()
         
         match transport_layer:
@@ -116,6 +117,7 @@ class ZMQConnector(E3Connector):
                 raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
 
         self.transport_layer = transport_layer
+        self.id = id
         
     def send_setup_request(self, payload):
         # Lazy pirate pattern, i.e., reliability on the client side
@@ -125,19 +127,19 @@ class ZMQConnector(E3Connector):
         while request_retries > 0:
             setup_socket = self.setup_context.socket(zmq.REQ)
             setup_socket.connect(self.setup_endpoint)
-            e3_logger.debug("Send E3 Setup request")
+            #e3_logger.debug("Send E3 Setup request")
             setup_socket.send(payload)
 
             if (setup_socket.poll(request_timeout) & zmq.POLLIN) != 0:
                 reply = setup_socket.recv()
-                e3_logger.debug('ZMQ setup socket replied')
+                #e3_logger.debug('ZMQ setup socket replied')
                 return reply
             
             request_retries -= 1
-            e3_logger.error("ZMQ setup did not reply")
+            #e3_logger.error("ZMQ setup did not reply")
             setup_socket.setsockopt(zmq.LINGER, 0)
             setup_socket.close()
-            e3_logger.debug('Retrying to connect')
+            #e3_logger.debug('Retrying to connect')
         
         raise ConnectionRefusedError('E3 Setup request procedure did not went through')
         
@@ -154,26 +156,35 @@ class ZMQConnector(E3Connector):
 
     def receive(self) -> bytes:
         # The commented part should be decommented for measuring the effective performance of the control loop
-        # start_time = time.perf_counter()
-        # while True:
-            
+        #start_time = time.perf_counter()
+        #while True:
+        #    
         #     # Poll the socket without blocking
-        #     events = dict(self.poller.poll(0))
-            
-        #     if self.inbound_socket in events and events[self.inbound_socket] == zmq.POLLIN:
-        #         with open(f"{LOG_DIR}/busy.txt", "a") as f:
-        #             print(f"{time.perf_counter() - start_time}", file=f)
-                return self.inbound_socket.recv()
+        #    events = dict(self.poller.poll(0))
+        #    
+        #    if self.inbound_socket in events and events[self.inbound_socket] == zmq.POLLIN:
+        #        with open(f"{LOG_DIR}/busy.txt", "a") as f:
+        #            print(f"{time.perf_counter() - start_time}", file=f)
+                rec = self.inbound_socket.recv()
+                seq_number = int.from_bytes(bytes.fromhex(rec.hex()[14:18]), byteorder="little")
+                rec = rec[:7] + rec[9:]
+                dapp_logger.info(f"RECEIVED IQs | Thread {self.id} | Sequence Number {seq_number}")
+                return rec,seq_number
         
 
     def setup_outbound_connection(self):
         self.outbound_context = zmq.Context()
-        self.outbound_socket = self.outbound_context.socket(zmq.PUB)
-        self.outbound_socket.bind(self.outbound_endpoint)
+        #self.outbound_socket = self.outbound_context.socket(zmq.PUB)
+        #self.outbound_socket.bind(self.outbound_endpoint)
+        ## Changes to allow for multiple dApps communicating simultaneously
+        self.outbound_socket = self.outbound_context.socket(zmq.PUSH)
+        self.outbound_socket.connect(self.outbound_endpoint)
+        # ------
         if self.transport_layer == E3TransportLayer.IPC:
             os.chmod(self.DAPP_IPC_SOCKET_PATH, 0o666)
     
     def send(self, payload: bytes):
+        dapp_logger.info(f"SEND CONTROL | Thread {self.id}")
         self.outbound_socket.send(payload)
 
     def dispose(self):
@@ -187,7 +198,7 @@ class ZMQConnector(E3Connector):
 class POSIXConnector(E3Connector):
     CHUNK_SIZE = 8192
     
-    def __init__(self, transport_layer: E3TransportLayer):   
+    def __init__(self, transport_layer: E3TransportLayer, id: int):   
         match transport_layer:
             case E3TransportLayer.SCTP | E3TransportLayer.TCP:
                 self.setup_endpoint = ("127.0.0.1", 9990)
@@ -203,6 +214,7 @@ class POSIXConnector(E3Connector):
                 raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
         
         self.transport_layer = transport_layer
+        self.id = id
     
     def _create_socket(self):
         match self.transport_layer:
@@ -255,7 +267,7 @@ class POSIXConnector(E3Connector):
             e3_logger.error("Failed to receive buffer size")
             return None
         buffer_size = struct.unpack("!I", raw_size)[0]
-        e3_logger.debug(f"buffer size is {buffer_size}")
+        #e3_logger.debug(f"buffer size is {buffer_size}")
 
         # Receive the buffer in chunks
         while len(data) < buffer_size:
@@ -267,8 +279,8 @@ class POSIXConnector(E3Connector):
             data.extend(chunk)
             chunks += 1
 
-        e3_logger.debug(f"Chunks recv {chunks}")
-        e3_logger.debug(f"Total size recv {len(data)}")
+        #e3_logger.debug(f"Chunks recv {chunks}")
+        #e3_logger.debug(f"Total size recv {len(data)}")
         return bytes(data)
     
     def receive(self) -> bytes:

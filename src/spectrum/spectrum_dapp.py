@@ -101,6 +101,7 @@ class SpectrumSharingDApp(DApp):
             dapp_logger.debug(f"Control count is: {self.control_count}")
 
             if self.control_count == self.Average_over_frames:
+                ts = time.time()
                 abs_iq_av_db =  20 * np.log10(1 + (self.abs_iq_av/(self.Average_over_frames)))
                 abs_iq_av_db_offset_correct = np.append(abs_iq_av_db[self.First_carrier_offset:self.FFT_SIZE],abs_iq_av_db[0:self.First_carrier_offset])
                 dapp_logger.info(f'--- AVG VALUES ----')
@@ -129,6 +130,8 @@ class SpectrumSharingDApp(DApp):
                 
                 # Schedule the delivery
                 self.e3_interface.schedule_control(size+prbs_to_send)
+                te = time.time()
+                dapp_logger.info(f"EXECUTION TIME: {(te-ts)*1e3}")
 
                 if self.energyGui:
                     self.sig_queue.put(abs_iq_av_db)

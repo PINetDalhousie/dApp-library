@@ -22,8 +22,8 @@ class E3Interface:
             self.stop_event = multiprocessing.Event()
             self.initialized = True
 
-            # Create an E3Connector instance based on the configuration
-            self.e3_connector = E3Connector.setup_connector(kwargs.get('link', ''), kwargs.get('transport', '')) 
+            # Create an E3Connector instance based on the configurations
+            self.e3_connector = E3Connector.setup_connector(kwargs.get('link', ''), kwargs.get('transport', ''), kwargs.get('id', 1)) 
             
             e3_logger.info(f"Endpoint setup {self.e3_connector.setup_endpoint}")
             e3_logger.info(f"Endpoint inbound {self.e3_connector.inbound_endpoint}")
@@ -64,27 +64,30 @@ class E3Interface:
         """
         Inbound is for all the messages that are coming from the RAN after the initial setup 
         """
-        e3_logger.info(f'Start inbound connection')
+        #e3_logger.info(f'Start inbound connection')
         self.e3_connector.setup_inbound_connection()
-        e3_logger.info(f'Start inbound loop')
+        #e3_logger.info(f'Start inbound loop')
 
         try:
             while not self.stop_event.is_set():
-                data = self.e3_connector.receive()
+                data, seq_number = self.e3_connector.receive()
                 if not data:
                     e3_logger.error(f'No data received, connection closed, end')
                     break
-                e3_logger.debug(f'Received data size: {len(data)}')
-                e3_logger.debug(data.hex())
+                #e3_logger.info(f'Received data size: {len(data)}')
+                #e3_logger.debug(data.hex()[:100])
+                #print("RECEIVED")
+                #data = data[:14]+data[:18]
                 pdu = self.defs.decode("E3-PDU", data)
-                e3_logger.debug(f"Data decoded")
+                #e3_logger.debug(f"Data decoded")
                 match pdu[0]:
                     case "indicationMessage":
                         e3_indication_message = pdu[1]
                         protocolData = e3_indication_message['protocolData']
-                        e3_logger.debug(protocolData)
-                        e3_logger.debug(f"Indication message protocolData {len(protocolData)}")
-                        self._handle_incoming_data(protocolData)
+                        #e3_logger.debug(protocolData)
+                        #print(protocolData)
+                        #e3_logger.debug(f"Indication message protocolData {len(protocolData)}")
+                        self._handle_incoming_data(protocolData, seq_number)
 
                     case "xAppControlAction":
                         e3_xapp_control_action = pdu[1]
@@ -104,10 +107,10 @@ class E3Interface:
         Outbound is for all the messages that should go to the RAN after the initial setup 
         Messages are dApp Control Action and dApp Report Message
         """
-        e3_logger.info(f'Start outbound connection')
+        #e3_logger.info(f'Start outbound connection')
         self.e3_connector.setup_outbound_connection()
 
-        e3_logger.info(f'Start outbound loop')
+        #e3_logger.info(f'Start outbound loop')
         try:
             while not self.stop_event.is_set():
                 try:
@@ -115,7 +118,7 @@ class E3Interface:
                 except queue.Empty:
                     continue
                 
-                e3_logger.debug(f"Outbound queue has got '{msg}', {data}")
+                #e3_logger.debug(f"Outbound queue has got '{msg}', {data}")
                 
                 match msg:
                     case "control":
@@ -126,7 +129,7 @@ class E3Interface:
                     case _:
                         raise ValueError("Unrecognized value ", msg)
 
-                e3_logger.debug(f"Send the pdu encoded {payload}")
+                #e3_logger.debug(f"Send the pdu encoded {payload}")
                 self.e3_connector.send(payload)
 
         except Exception as e:
@@ -135,10 +138,10 @@ class E3Interface:
         finally:
             e3_logger.info("Close outbound connection")
 
-    def _handle_incoming_data(self, data):
+    def _handle_incoming_data(self, data, seq_number):
         for callback in self.callbacks:
-            e3_logger.debug("Launch callback")
-            callback(data)
+            #e3_logger.debug("Launch callback")
+            callback(data,seq_number)
                 
     def schedule_control(self, payload: bytes):
         self.outbound_queue.put(('control', payload))
