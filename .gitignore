@@ -180,3 +180,4 @@ logs/**
 dapp_profile
 profile_output.txt
 e3protocol/client/test
+*.keras
