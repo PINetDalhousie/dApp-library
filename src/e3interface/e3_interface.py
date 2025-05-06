@@ -114,7 +114,7 @@ class E3Interface:
         try:
             while not self.stop_event.is_set():
                 try:
-                    msg, data = self.outbound_queue.get(timeout=0.5)
+                    msg, data, seq_number = self.outbound_queue.get(timeout=0.5)
                 except queue.Empty:
                     continue
                 
@@ -130,7 +130,7 @@ class E3Interface:
                         raise ValueError("Unrecognized value ", msg)
 
                 #e3_logger.debug(f"Send the pdu encoded {payload}")
-                self.e3_connector.send(payload)
+                self.e3_connector.send(payload, seq_number)
 
         except Exception as e:
             e3_logger.error(f"Error outbound thread: {e}")
@@ -143,8 +143,8 @@ class E3Interface:
             #e3_logger.debug("Launch callback")
             callback(data,seq_number)
                 
-    def schedule_control(self, payload: bytes):
-        self.outbound_queue.put(('control', payload))
+    def schedule_control(self, payload: bytes, seq_number: int = 0):
+        self.outbound_queue.put(('control', payload, seq_number))
     
     def schedule_report(self, payload: bytes):
         self.outbound_queue.put(('report', payload))

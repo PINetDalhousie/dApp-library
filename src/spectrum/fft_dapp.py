@@ -93,7 +93,7 @@ class FFTDApp(DApp):
 
         # Schedule the delivery
         dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")
-        self.e3_interface.schedule_control(size+prbs_to_send)
+        self.e3_interface.schedule_control(size+prbs_to_send, seq_number)
 
         if self.energyGui:
             self.sig_queue.put(fft_result)

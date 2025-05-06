@@ -87,7 +87,7 @@ class E3Connector(ABC):
         pass
 
     @abstractmethod
-    def send(self, payload: bytes):
+    def send(self, payload: bytes, seq_number: int = None):
         pass
     
     @abstractmethod 
@@ -183,9 +183,10 @@ class ZMQConnector(E3Connector):
         if self.transport_layer == E3TransportLayer.IPC:
             os.chmod(self.DAPP_IPC_SOCKET_PATH, 0o666)
     
-    def send(self, payload: bytes):
+    def send(self, payload: bytes, seq_number: int = None):
         dapp_logger.info(f"SEND CONTROL | Thread {self.id}")
-        self.outbound_socket.send(payload)
+        seq_bytes = struct.pack('<I', seq_number if seq_number is not None else 0)
+        self.outbound_socket.send(seq_bytes + payload)
 
     def dispose(self):
         if hasattr(self, "setup_context"):    
@@ -290,7 +291,7 @@ class POSIXConnector(E3Connector):
         self.outbound_socket = self._create_socket()
         self.outbound_socket.connect(self.outbound_endpoint)
 
-    def send(self, payload: bytes):
+    def send(self, payload: bytes, seq_number: int = None):
         self.outbound_socket.send(payload)
     
     def dispose(self):

@@ -23,8 +23,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 tf.config.run_functions_eagerly(True)
 tf.data.experimental.enable_debug_mode()
-tf.config.threading.set_inter_op_parallelism_threads(1)
-tf.config.threading.set_intra_op_parallelism_threads(1)
+#tf.config.threading.set_inter_op_parallelism_threads(1)
+#tf.config.threading.set_intra_op_parallelism_threads(1)
 #tf.compat.v1.disable_eager_execution()
 
 class NNDApp(DApp):
@@ -127,7 +127,7 @@ class NNDApp(DApp):
 
         # Schedule the delivery
         dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")
-        self.e3_interface.schedule_control(size+prbs_to_send)
+        self.e3_interface.schedule_control(size+prbs_to_send, seq_number)
 
         if self.energyGui:
             self.sig_queue.put(predictions)
