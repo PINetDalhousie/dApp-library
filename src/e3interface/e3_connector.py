@@ -306,3 +306,114 @@ class POSIXConnector(E3Connector):
             os.remove(self.E3_IPC_SETUP_PATH)    
             os.remove(self.E3_IPC_SOCKET_PATH)    
             os.remove(self.DAPP_IPC_SOCKET_PATH)             
+
+class SNICConnector(E3Connector):
+    CHUNK_SIZE = 8192
+    
+    def __init__(self, transport_layer: E3TransportLayer, id: int):   
+        match transport_layer:
+            case E3TransportLayer.SCTP | E3TransportLayer.TCP:
+                self.setup_endpoint = ("127.0.0.1", 9990)
+                self.inbound_endpoint = ("127.0.0.1", 9991)
+                self.outbound_endpoint = ("127.0.0.1", 9999)
+            
+            case E3TransportLayer.IPC: 
+                self.setup_endpoint = self.E3_IPC_SETUP_PATH
+                self.inbound_endpoint = self.E3_IPC_SOCKET_PATH
+                self.outbound_endpoint = self.DAPP_IPC_SOCKET_PATH
+
+            case _:
+                raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
+        
+        self.transport_layer = transport_layer
+        self.id = id
+    
+    def _create_socket(self):
+        match self.transport_layer:
+            case E3TransportLayer.SCTP:
+                try:
+                    import sctp
+                except ModuleNotFoundError:
+                    e3_logger.critical(
+                        "SCTP selected as transport layer, but the optional dependency 'pysctp' is not installed.\n"
+                        "Fix this by running:\n\n"
+                        "    pip install 'dApps[network]'  # OR\n"
+                        "    pip install 'dApps[all]'\n",
+                        exc_info=True
+                    )
+                    exit(-1)
+                sock = sctp.sctpsocket_tcp(socket.AF_INET)
+            case E3TransportLayer.TCP:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            case E3TransportLayer.IPC:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            case _:
+                raise ValueError(f'Unknown/Unsupported value for transport layer {self.transport_layer}')
+        return sock
+    
+    def send_setup_request(self, payload):
+        setup_socket = self._create_socket()
+
+        try:
+            setup_socket.connect(self.setup_endpoint)
+            setup_socket.send(payload)
+            reply = self.receive_in_chunks(setup_socket)
+        finally:
+            setup_socket.close()
+            
+        return reply
+    
+    def setup_inbound_connection(self):
+        self.inbound_socket = self._create_socket()
+        self.inbound_socket.bind(self.inbound_endpoint)
+        self.inbound_socket.listen(5)        
+        self.inbound_connection, _ = self.inbound_socket.accept()
+
+    def receive_in_chunks(self, conn):
+        data = bytearray()
+        chunks = 0
+
+        # Receive the size of the buffer first
+        raw_size = conn.recv(4)
+        if len(raw_size) < 4:
+            e3_logger.error("Failed to receive buffer size")
+            return None
+        buffer_size = struct.unpack("!I", raw_size)[0]
+        #e3_logger.debug(f"buffer size is {buffer_size}")
+
+        # Receive the buffer in chunks
+        while len(data) < buffer_size:
+            remaining = buffer_size - len(data)
+            chunk = conn.recv(min(self.CHUNK_SIZE, remaining))
+            if not chunk:
+                e3_logger.error("Connection closed unexpectedly")
+                return None  # Connection closed unexpectedly
+            data.extend(chunk)
+            chunks += 1
+
+        #e3_logger.debug(f"Chunks recv {chunks}")
+        #e3_logger.debug(f"Total size recv {len(data)}")
+        return bytes(data)
+    
+    def receive(self) -> bytes:
+        return self.receive_in_chunks(self.inbound_connection) 
+
+    def setup_outbound_connection(self):
+        self.outbound_socket = self._create_socket()
+        self.outbound_socket.connect(self.outbound_endpoint)
+
+    def send(self, payload: bytes, seq_number: int = None):
+        self.outbound_socket.send(payload)
+    
+    def dispose(self):
+        if hasattr(self, "outbound_socket"):
+            self.outbound_socket.close()
+        if hasattr(self, "inbound_connection"):
+            self.inbound_connection.close()
+        if hasattr(self, "inbound_socket"):
+            self.inbound_socket.close()
+        
+        if self.transport_layer == E3TransportLayer.IPC:
+            os.remove(self.E3_IPC_SETUP_PATH)    
+            os.remove(self.E3_IPC_SOCKET_PATH)    
+            os.remove(self.DAPP_IPC_SOCKET_PATH)             
