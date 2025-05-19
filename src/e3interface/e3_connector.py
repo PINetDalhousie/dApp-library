@@ -1,6 +1,7 @@
 import struct
 from abc import ABC, abstractmethod
 from enum import Enum
+from scapy.all import sniff, Ether, IP, UDP, TCP
 import os
 import socket
 import zmq
@@ -11,6 +12,7 @@ from .e3_logging import e3_logger, LOG_DIR, dapp_logger
 class E3LinkLayer(Enum):
     ZMQ = "zmq"
     POSIX = "posix"
+    SCAPY = "scapy"
 
     def __str__(self):
         return self.value
@@ -44,7 +46,8 @@ class E3Connector(ABC):
         (E3LinkLayer.ZMQ, E3TransportLayer.TCP),
         (E3LinkLayer.POSIX, E3TransportLayer.TCP),
         (E3LinkLayer.POSIX, E3TransportLayer.SCTP),
-        (E3LinkLayer.POSIX, E3TransportLayer.IPC)
+        (E3LinkLayer.POSIX, E3TransportLayer.IPC),
+        (E3LinkLayer.SCAPY, E3TransportLayer.SCTP)
     ]
     
     IPC_BASE_DIR = "/tmp/dapps"
@@ -64,8 +67,11 @@ class E3Connector(ABC):
                 f"Must be one of {E3Connector.VALID_CONFIGURATIONS}"
             )
             
+        print("SETUP CONNECTOR")
         if link_layer == E3LinkLayer.POSIX:
             return POSIXConnector(transport_layer, id)
+        elif link_layer == E3LinkLayer.SCAPY:
+            return SCAPYConnector(transport_layer, id)
         else:
             return ZMQConnector(transport_layer, id)
     
@@ -202,9 +208,9 @@ class POSIXConnector(E3Connector):
     def __init__(self, transport_layer: E3TransportLayer, id: int):   
         match transport_layer:
             case E3TransportLayer.SCTP | E3TransportLayer.TCP:
-                self.setup_endpoint = ("127.0.0.1", 9990)
-                self.inbound_endpoint = ("127.0.0.1", 9991)
-                self.outbound_endpoint = ("127.0.0.1", 9999)
+                self.setup_endpoint = ("192.168.100.1", 9990)
+                self.inbound_endpoint = ("0.0.0.0", 9991)
+                self.outbound_endpoint = ("192.168.100.1", 9999)
             
             case E3TransportLayer.IPC: 
                 self.setup_endpoint = self.E3_IPC_SETUP_PATH
@@ -214,6 +220,8 @@ class POSIXConnector(E3Connector):
             case _:
                 raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
         
+        print("INITIALIZING POSIX")
+        print(self.setup_endpoint)
         self.transport_layer = transport_layer
         self.id = id
     
@@ -246,7 +254,7 @@ class POSIXConnector(E3Connector):
         try:
             setup_socket.connect(self.setup_endpoint)
             setup_socket.send(payload)
-            reply = self.receive_in_chunks(setup_socket)
+            reply, _ = self.receive_in_chunks(setup_socket)
         finally:
             setup_socket.close()
             
@@ -260,7 +268,8 @@ class POSIXConnector(E3Connector):
 
     def receive_in_chunks(self, conn):
         data = bytearray()
-        chunks = 0
+        chunks = 0 
+        seq_number = -1
 
         # Receive the size of the buffer first
         raw_size = conn.recv(4)
@@ -271,9 +280,12 @@ class POSIXConnector(E3Connector):
         #e3_logger.debug(f"buffer size is {buffer_size}")
 
         # Receive the buffer in chunks
-        while len(data) < buffer_size:
+        while len(data) < buffer_size-2:
             remaining = buffer_size - len(data)
             chunk = conn.recv(min(self.CHUNK_SIZE, remaining))
+            if(chunks == 0 and len(chunk) > 4): 
+                seq_number = int.from_bytes(bytes.fromhex(chunk.hex()[14:18]), byteorder="little")
+                chunk = chunk[:7] + chunk[9:]
             if not chunk:
                 e3_logger.error("Connection closed unexpectedly")
                 return None  # Connection closed unexpectedly
@@ -282,17 +294,21 @@ class POSIXConnector(E3Connector):
 
         #e3_logger.debug(f"Chunks recv {chunks}")
         #e3_logger.debug(f"Total size recv {len(data)}")
-        return bytes(data)
+        return bytes(data), seq_number
     
     def receive(self) -> bytes:
-        return self.receive_in_chunks(self.inbound_connection) 
+        data,seq_number = self.receive_in_chunks(self.inbound_connection) 
+        dapp_logger.info(f"RECEIVED IQs | Thread {self.id} | Sequence Number {seq_number}")
+        return data,seq_number
 
     def setup_outbound_connection(self):
         self.outbound_socket = self._create_socket()
         self.outbound_socket.connect(self.outbound_endpoint)
 
     def send(self, payload: bytes, seq_number: int = None):
-        self.outbound_socket.send(payload)
+        dapp_logger.info(f"SEND CONTROL | Thread {self.id}")
+        seq_bytes = struct.pack('<I', seq_number if seq_number is not None else 0)
+        self.outbound_socket.send(seq_bytes + payload)
     
     def dispose(self):
         if hasattr(self, "outbound_socket"):
@@ -307,15 +323,15 @@ class POSIXConnector(E3Connector):
             os.remove(self.E3_IPC_SOCKET_PATH)    
             os.remove(self.DAPP_IPC_SOCKET_PATH)             
 
-class SNICConnector(E3Connector):
+
+class SCAPYConnector(POSIXConnector):
     CHUNK_SIZE = 8192
-    
-    def __init__(self, transport_layer: E3TransportLayer, id: int):   
+    def __init__(self, transport_layer, id):
         match transport_layer:
             case E3TransportLayer.SCTP | E3TransportLayer.TCP:
-                self.setup_endpoint = ("127.0.0.1", 9990)
-                self.inbound_endpoint = ("127.0.0.1", 9991)
-                self.outbound_endpoint = ("127.0.0.1", 9999)
+                self.setup_endpoint = ("192.168.100.1", 9990)
+                self.inbound_endpoint = ("0.0.0.0", 9991)
+                self.outbound_endpoint = ("192.168.100.1", 9999)
             
             case E3TransportLayer.IPC: 
                 self.setup_endpoint = self.E3_IPC_SETUP_PATH
@@ -327,7 +343,8 @@ class SNICConnector(E3Connector):
         
         self.transport_layer = transport_layer
         self.id = id
-    
+        self.interface = "p0" 
+
     def _create_socket(self):
         match self.transport_layer:
             case E3TransportLayer.SCTP:
@@ -357,7 +374,7 @@ class SNICConnector(E3Connector):
         try:
             setup_socket.connect(self.setup_endpoint)
             setup_socket.send(payload)
-            reply = self.receive_in_chunks(setup_socket)
+            reply, _ = self.receive_in_chunks(setup_socket)
         finally:
             setup_socket.close()
             
@@ -371,7 +388,8 @@ class SNICConnector(E3Connector):
 
     def receive_in_chunks(self, conn):
         data = bytearray()
-        chunks = 0
+        chunks = 0 
+        seq_number = -1
 
         # Receive the size of the buffer first
         raw_size = conn.recv(4)
@@ -382,9 +400,12 @@ class SNICConnector(E3Connector):
         #e3_logger.debug(f"buffer size is {buffer_size}")
 
         # Receive the buffer in chunks
-        while len(data) < buffer_size:
+        while len(data) < buffer_size-2:
             remaining = buffer_size - len(data)
             chunk = conn.recv(min(self.CHUNK_SIZE, remaining))
+            if(chunks == 0 and len(chunk) > 4): 
+                seq_number = int.from_bytes(bytes.fromhex(chunk.hex()[14:18]), byteorder="little")
+                chunk = chunk[:7] + chunk[9:]
             if not chunk:
                 e3_logger.error("Connection closed unexpectedly")
                 return None  # Connection closed unexpectedly
@@ -393,17 +414,36 @@ class SNICConnector(E3Connector):
 
         #e3_logger.debug(f"Chunks recv {chunks}")
         #e3_logger.debug(f"Total size recv {len(data)}")
-        return bytes(data)
+        return bytes(data), seq_number
     
-    def receive(self) -> bytes:
-        return self.receive_in_chunks(self.inbound_connection) 
+    #def receive(self) -> bytes:
+    #    data,seq_number = self.receive_in_chunks(self.inbound_connection) 
+    #    dapp_logger.info(f"RECEIVED IQs | Thread {self.id} | Sequence Number {seq_number}")
+    #    return data,seq_number
+
+    def receive(self):
+        src_host = "10.50.1.2"
+        # Sniff packets from the specified interface
+        packets = sniff(iface=self.interface, count=1, filter=f"host {src_host}")
+        for packet in packets:
+            if Ether in packet:
+                # Process the packet as needed
+                if(TCP in packet): 
+                    payload_size = len(bytes(packet[TCP].payload))
+                    print(f"Payload_size {payload_size}")
+                    if(payload_size == 0):
+                        return bytes(10),1
+                    return bytes(packet[TCP].payload),1  # Return the raw bytes of the packet
+            return None
 
     def setup_outbound_connection(self):
         self.outbound_socket = self._create_socket()
         self.outbound_socket.connect(self.outbound_endpoint)
 
     def send(self, payload: bytes, seq_number: int = None):
-        self.outbound_socket.send(payload)
+        dapp_logger.info(f"SEND CONTROL | Thread {self.id}")
+        seq_bytes = struct.pack('<I', seq_number if seq_number is not None else 0)
+        self.outbound_socket.send(seq_bytes + payload)
     
     def dispose(self):
         if hasattr(self, "outbound_socket"):
@@ -416,4 +456,4 @@ class SNICConnector(E3Connector):
         if self.transport_layer == E3TransportLayer.IPC:
             os.remove(self.E3_IPC_SETUP_PATH)    
             os.remove(self.E3_IPC_SOCKET_PATH)    
-            os.remove(self.DAPP_IPC_SOCKET_PATH)             
+            os.remove(self.DAPP_IPC_SOCKET_PATH)
