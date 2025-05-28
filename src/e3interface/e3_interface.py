@@ -2,7 +2,7 @@ import os
 import multiprocessing
 import queue
 import threading
-from .e3_connector import E3Connector
+from .e3_connector import E3Connector,SCAPYConnector
 from .e3_logging import e3_logger
 import asn1tools
 import time
@@ -73,19 +73,30 @@ class E3Interface:
                 if not data:
                     e3_logger.error(f'No data received, connection closed, end')
                     break
-                pdu = self.defs.decode("E3-PDU", data)
-                match pdu[0]:
-                    case "indicationMessage":
-                        e3_indication_message = pdu[1]
-                        protocolData = e3_indication_message['protocolData']
-                        self._handle_incoming_data(protocolData, seq_number)
+                #e3_logger.info(f'Received data size: {len(data)}')
+                #e3_logger.debug(data.hex()[:100])
+                #print("RECEIVED")
+                #data = data[:14]+data[:18]
+                if isinstance(self.e3_connector, SCAPYConnector):
+                    self._handle_incoming_data(data, seq_number)
+                else:
+                    pdu = self.defs.decode("E3-PDU", data)
+                    #e3_logger.debug(f"Data decoded")
+                    match pdu[0]:
+                        case "indicationMessage":
+                            e3_indication_message = pdu[1]
+                            protocolData = e3_indication_message['protocolData']
+                            #e3_logger.debug(protocolData)
+                            #print(protocolData)
+                            #e3_logger.debug(f"Indication message protocolData {len(protocolData)}")
+                            self._handle_incoming_data(protocolData, seq_number)
 
-                    case "xAppControlAction":
-                        e3_xapp_control_action = pdu[1]
-                        raise NotImplementedError()
+                        case "xAppControlAction":
+                            e3_xapp_control_action = pdu[1]
+                            raise NotImplementedError()
 
-                    case _:
-                        raise ValueError("Unrecognized value ", pdu)
+                        case _:
+                            raise ValueError("Unrecognized value ", pdu)
                     
         except Exception as e:
             e3_logger.error(f"Error in inbound thread: {e}")

@@ -1,7 +1,7 @@
 import struct
 from abc import ABC, abstractmethod
 from enum import Enum
-from scapy.all import sniff, Ether
+from scapy.all import sniff, Ether, IP, UDP, TCP
 import os
 import socket
 import zmq
@@ -67,6 +67,7 @@ class E3Connector(ABC):
                 f"Must be one of {E3Connector.VALID_CONFIGURATIONS}"
             )
             
+        print("SETUP CONNECTOR")
         if link_layer == E3LinkLayer.POSIX:
             return POSIXConnector(transport_layer, id)
         elif link_layer == E3LinkLayer.SCAPY:
@@ -207,9 +208,9 @@ class POSIXConnector(E3Connector):
     def __init__(self, transport_layer: E3TransportLayer, id: int):   
         match transport_layer:
             case E3TransportLayer.SCTP | E3TransportLayer.TCP:
-                self.setup_endpoint = ("127.0.0.1", 9990)
-                self.inbound_endpoint = ("127.0.0.1", 9991)
-                self.outbound_endpoint = ("127.0.0.1", 9999)
+                self.setup_endpoint = ("192.168.100.1", 9990)
+                self.inbound_endpoint = ("0.0.0.0", 9991)
+                self.outbound_endpoint = ("192.168.100.1", 9999)
             
             case E3TransportLayer.IPC: 
                 self.setup_endpoint = self.E3_IPC_SETUP_PATH
@@ -219,6 +220,8 @@ class POSIXConnector(E3Connector):
             case _:
                 raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
         
+        print("INITIALIZING POSIX")
+        print(self.setup_endpoint)
         self.transport_layer = transport_layer
         self.id = id
     
@@ -251,7 +254,7 @@ class POSIXConnector(E3Connector):
         try:
             setup_socket.connect(self.setup_endpoint)
             setup_socket.send(payload)
-            reply = self.receive_in_chunks(setup_socket)
+            reply, _ = self.receive_in_chunks(setup_socket)
         finally:
             setup_socket.close()
             
@@ -265,7 +268,8 @@ class POSIXConnector(E3Connector):
 
     def receive_in_chunks(self, conn):
         data = bytearray()
-        chunks = 0
+        chunks = 0 
+        seq_number = -1
 
         # Receive the size of the buffer first
         raw_size = conn.recv(4)
@@ -276,9 +280,12 @@ class POSIXConnector(E3Connector):
         #e3_logger.debug(f"buffer size is {buffer_size}")
 
         # Receive the buffer in chunks
-        while len(data) < buffer_size:
+        while len(data) < buffer_size-2:
             remaining = buffer_size - len(data)
             chunk = conn.recv(min(self.CHUNK_SIZE, remaining))
+            if(chunks == 0 and len(chunk) > 4): 
+                seq_number = int.from_bytes(bytes.fromhex(chunk.hex()[14:18]), byteorder="little")
+                chunk = chunk[:7] + chunk[9:]
             if not chunk:
                 e3_logger.error("Connection closed unexpectedly")
                 return None  # Connection closed unexpectedly
@@ -287,17 +294,21 @@ class POSIXConnector(E3Connector):
 
         #e3_logger.debug(f"Chunks recv {chunks}")
         #e3_logger.debug(f"Total size recv {len(data)}")
-        return bytes(data)
+        return bytes(data), seq_number
     
     def receive(self) -> bytes:
-        return self.receive_in_chunks(self.inbound_connection) 
+        data,seq_number = self.receive_in_chunks(self.inbound_connection) 
+        dapp_logger.info(f"RECEIVED IQs | Thread {self.id} | Sequence Number {seq_number}")
+        return data,seq_number
 
     def setup_outbound_connection(self):
         self.outbound_socket = self._create_socket()
         self.outbound_socket.connect(self.outbound_endpoint)
 
     def send(self, payload: bytes, seq_number: int = None):
-        self.outbound_socket.send(payload)
+        dapp_logger.info(f"SEND CONTROL | Thread {self.id}")
+        seq_bytes = struct.pack('<I', seq_number if seq_number is not None else 0)
+        self.outbound_socket.send(seq_bytes + payload)
     
     def dispose(self):
         if hasattr(self, "outbound_socket"):
@@ -314,28 +325,135 @@ class POSIXConnector(E3Connector):
 
 
 class SCAPYConnector(POSIXConnector):
+    CHUNK_SIZE = 8192
     def __init__(self, transport_layer, id):
-        super().__init__(transport_layer, id)
+        match transport_layer:
+            case E3TransportLayer.SCTP | E3TransportLayer.TCP:
+                self.setup_endpoint = ("192.168.100.1", 9990)
+                self.inbound_endpoint = ("0.0.0.0", 9991)
+                self.outbound_endpoint = ("192.168.100.1", 9999)
+            
+            case E3TransportLayer.IPC: 
+                self.setup_endpoint = self.E3_IPC_SETUP_PATH
+                self.inbound_endpoint = self.E3_IPC_SOCKET_PATH
+                self.outbound_endpoint = self.DAPP_IPC_SOCKET_PATH
+
+            case _:
+                raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
+        
+        self.transport_layer = transport_layer
+        self.id = id
         self.interface = "p0" 
 
-    """
+    def _create_socket(self):
+        match self.transport_layer:
+            case E3TransportLayer.SCTP:
+                try:
+                    import sctp
+                except ModuleNotFoundError:
+                    e3_logger.critical(
+                        "SCTP selected as transport layer, but the optional dependency 'pysctp' is not installed.\n"
+                        "Fix this by running:\n\n"
+                        "    pip install 'dApps[network]'  # OR\n"
+                        "    pip install 'dApps[all]'\n",
+                        exc_info=True
+                    )
+                    exit(-1)
+                sock = sctp.sctpsocket_tcp(socket.AF_INET)
+            case E3TransportLayer.TCP:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            case E3TransportLayer.IPC:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            case _:
+                raise ValueError(f'Unknown/Unsupported value for transport layer {self.transport_layer}')
+        return sock
+    
+    def send_setup_request(self, payload):
+        setup_socket = self._create_socket()
+
+        try:
+            setup_socket.connect(self.setup_endpoint)
+            setup_socket.send(payload)
+            reply, _ = self.receive_in_chunks(setup_socket)
+        finally:
+            setup_socket.close()
+            
+        return reply
+    
     def setup_inbound_connection(self):
-        # Instead of a traditional socket, we will set up packet sniffing
-        self.inbound_socket = None  # Placeholder, as we won't use a socket here
-    """
+        self.inbound_socket = self._create_socket()
+        self.inbound_socket.bind(self.inbound_endpoint)
+        self.inbound_socket.listen(5)        
+        self.inbound_connection, _ = self.inbound_socket.accept()
+
+    def receive_in_chunks(self, conn):
+        data = bytearray()
+        chunks = 0 
+        seq_number = -1
+
+        # Receive the size of the buffer first
+        raw_size = conn.recv(4)
+        if len(raw_size) < 4:
+            e3_logger.error("Failed to receive buffer size")
+            return None
+        buffer_size = struct.unpack("!I", raw_size)[0]
+        #e3_logger.debug(f"buffer size is {buffer_size}")
+
+        # Receive the buffer in chunks
+        while len(data) < buffer_size-2:
+            remaining = buffer_size - len(data)
+            chunk = conn.recv(min(self.CHUNK_SIZE, remaining))
+            if(chunks == 0 and len(chunk) > 4): 
+                seq_number = int.from_bytes(bytes.fromhex(chunk.hex()[14:18]), byteorder="little")
+                chunk = chunk[:7] + chunk[9:]
+            if not chunk:
+                e3_logger.error("Connection closed unexpectedly")
+                return None  # Connection closed unexpectedly
+            data.extend(chunk)
+            chunks += 1
+
+        #e3_logger.debug(f"Chunks recv {chunks}")
+        #e3_logger.debug(f"Total size recv {len(data)}")
+        return bytes(data), seq_number
+    
+    #def receive(self) -> bytes:
+    #    data,seq_number = self.receive_in_chunks(self.inbound_connection) 
+    #    dapp_logger.info(f"RECEIVED IQs | Thread {self.id} | Sequence Number {seq_number}")
+    #    return data,seq_number
 
     def receive(self):
+        src_host = "10.50.1.2"
         # Sniff packets from the specified interface
-        packets = sniff(iface=self.interface, count=1)
+        packets = sniff(iface=self.interface, count=1, filter=f"host {src_host}")
         for packet in packets:
             if Ether in packet:
                 # Process the packet as needed
-                return bytes(packet)  # Return the raw bytes of the packet
+                if(TCP in packet): 
+                    payload_size = len(bytes(packet[TCP].payload))
+                    print(f"Payload_size {payload_size}")
+                    if(payload_size == 0):
+                        return bytes(10),1
+                    return bytes(packet[TCP].payload),1  # Return the raw bytes of the packet
+            return None
 
-    def dispose(self):
-        # No specific disposal needed for packet sniffing
-        pass
+    def setup_outbound_connection(self):
+        self.outbound_socket = self._create_socket()
+        self.outbound_socket.connect(self.outbound_endpoint)
 
     def send(self, payload: bytes, seq_number: int = None):
-        # Use the POSIXConnector's send method
-        super().send(payload, seq_number)
+        dapp_logger.info(f"SEND CONTROL | Thread {self.id}")
+        seq_bytes = struct.pack('<I', seq_number if seq_number is not None else 0)
+        self.outbound_socket.send(seq_bytes + payload)
+    
+    def dispose(self):
+        if hasattr(self, "outbound_socket"):
+            self.outbound_socket.close()
+        if hasattr(self, "inbound_connection"):
+            self.inbound_connection.close()
+        if hasattr(self, "inbound_socket"):
+            self.inbound_socket.close()
+        
+        if self.transport_layer == E3TransportLayer.IPC:
+            os.remove(self.E3_IPC_SETUP_PATH)    
+            os.remove(self.E3_IPC_SOCKET_PATH)    
+            os.remove(self.DAPP_IPC_SOCKET_PATH)
