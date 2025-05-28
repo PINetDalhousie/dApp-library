@@ -5,6 +5,7 @@ import threading
 from .e3_connector import E3Connector
 from .e3_logging import e3_logger
 import asn1tools
+import time
 
 class E3Interface:
     _instance = None
@@ -64,9 +65,7 @@ class E3Interface:
         """
         Inbound is for all the messages that are coming from the RAN after the initial setup 
         """
-        #e3_logger.info(f'Start inbound connection')
         self.e3_connector.setup_inbound_connection()
-        #e3_logger.info(f'Start inbound loop')
 
         try:
             while not self.stop_event.is_set():
@@ -74,19 +73,11 @@ class E3Interface:
                 if not data:
                     e3_logger.error(f'No data received, connection closed, end')
                     break
-                #e3_logger.info(f'Received data size: {len(data)}')
-                #e3_logger.debug(data.hex()[:100])
-                #print("RECEIVED")
-                #data = data[:14]+data[:18]
                 pdu = self.defs.decode("E3-PDU", data)
-                #e3_logger.debug(f"Data decoded")
                 match pdu[0]:
                     case "indicationMessage":
                         e3_indication_message = pdu[1]
                         protocolData = e3_indication_message['protocolData']
-                        #e3_logger.debug(protocolData)
-                        #print(protocolData)
-                        #e3_logger.debug(f"Indication message protocolData {len(protocolData)}")
                         self._handle_incoming_data(protocolData, seq_number)
 
                     case "xAppControlAction":

@@ -5,7 +5,7 @@ dApp for Spectrum Sharing
 
 __author__ = "Conrado Boeira"
 
-import multiprocessing
+#import multiprocessing
 import time
 import numpy as np
 import threading
@@ -15,17 +15,23 @@ import tensorflow as tf
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
+
 MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/trained_model.keras'
+#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/nn_model.engine'
 NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'normalization_params.npy')
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Show more TF warnings
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-tf.config.run_functions_eagerly(True)
-tf.data.experimental.enable_debug_mode()
-#tf.config.threading.set_inter_op_parallelism_threads(1)
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Force CPU only
+#os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+#tf.config.run_functions_eagerly(True)
+#tf.data.experimental.enable_debug_mode()
+#tf.config.threading.set_inter_op_parallelism_threads(8)
 #tf.config.threading.set_intra_op_parallelism_threads(1)
 #tf.compat.v1.disable_eager_execution()
+
+
+#import pycuda.autoinit
+
 
 class NNDApp(DApp):
 
@@ -66,10 +72,9 @@ class NNDApp(DApp):
         self.control_count = 1
         self.iq_values = np.zeros(self.FFT_SIZE, dtype=np.complex128)
 
-        tf.keras.backend.clear_session()
-
-        self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-        self.model.make_predict_function()
+        #tf.keras.backend.clear_session()
+        self.model = None
+        #self.model.make_predict_function()
         #self.graph = tf.get_default_graph()
 
 
@@ -82,26 +87,31 @@ class NNDApp(DApp):
 
         if self.energyGui:
             from visualization.energy import EnergyPlotter
-            self.sig_queue = multiprocessing.Queue() 
-            self.energyPlotter = EnergyPlotter(self.FFT_SIZE, bw=self.bw, center_freq=self.center_freq) 
+            #self.sig_queue = multiprocessing.Queue() 
+            #self.energyPlotter = EnergyPlotter(self.FFT_SIZE, bw=self.bw, center_freq=self.center_freq) 
 
         if self.iqPlotterGui:
             from visualization.iq import IQPlotter
-            self.iq_queue = multiprocessing.Queue() 
-            iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
-            self.iqPlotter = IQPlotter(buffer_size=500, iq_size=iq_size, bw=self.bw, center_freq=self.center_freq)    
+            #self.iq_queue = multiprocessing.Queue() 
+            #iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
+            #self.iqPlotter = IQPlotter(buffer_size=500, iq_size=iq_size, bw=self.bw, center_freq=self.center_freq)    
 
         if self.dashboard:
             from visualization.dashboard import Dashboard
-            self.demo_queue = multiprocessing.Queue()
-            iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
-            classifier = kwargs.get('classifier', None)
-            self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
-
+            #self.demo_queue = multiprocessing.Queue()
+            #iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
+            #classifier = kwargs.get('classifier', None)
+            #self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
+    
+    
     def process_iqs(self, thread_id=0, seq_number=0):
-        norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
-        mean = norm_params['mean']
-        std = norm_params['std']
+        if self.model is None:
+            self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+            #from model_files.onnx_helper import ONNXClassifierWrapper
+            #self.model = ONNXClassifierWrapper(MODEL_PATH, target_dtype = np.float32)
+        #norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
+        #mean = norm_params['mean']
+        #std = norm_params['std']
         # Apply normalization
         #iq_comp = (self.iq_values- mean) / std
         #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
@@ -113,7 +123,8 @@ class NNDApp(DApp):
         #print(f"Input dtype: {self.model.input.dtype}")
         input_tensor = tf.convert_to_tensor(iq_comp, dtype=tf.float32)
         predictions = self.model(input_tensor, training=False).numpy()
-    
+        #predictions = self.model.predict(iq_comp)
+
         # Process predictions
         dapp_logger.info(f"FINISHED PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
 

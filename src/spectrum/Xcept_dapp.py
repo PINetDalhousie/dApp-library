@@ -11,21 +11,30 @@ import numpy as np
 import threading
 import os
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 # np.set_printoptions(threshold=sys.maxsize)
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
 MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_trained_model.keras'
+#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_model.engine'
 NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'xcept_normalization_params.npy')
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Show more TF warnings
+#os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 tf.config.run_functions_eagerly(True)
 tf.data.experimental.enable_debug_mode()
-#tf.config.threading.set_inter_op_parallelism_threads(1)
-#tf.config.threading.set_intra_op_parallelism_threads(1)
-#tf.compat.v1.disable_eager_execution()
+#tf.config.threading.set_inter_op_parallelism_threads(8)
+#tf.config.threading.set_intra_op_parallelism_threads(8)
+tf.config.optimizer.set_jit(True)
+
+# Set the global policy. Do this early in your script.
+# For inference, 'mixed_float16' is typically what you want.
+# If you were training, you'd also handle optimizer scaling.
+#policy = mixed_precision.Policy('mixed_float16')
+#mixed_precision.set_global_policy(policy)
 
 class XceptDApp(DApp):
 
@@ -68,8 +77,7 @@ class XceptDApp(DApp):
 
         tf.keras.backend.clear_session()
 
-        self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-        self.model.make_predict_function()
+        self.model = None
         #self.graph = tf.get_default_graph()
 
 
@@ -122,20 +130,28 @@ class XceptDApp(DApp):
         return np.array([spec_rgb])
 
     def process_iqs(self, thread_id=0, seq_number=0):
-        norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
-        mean = norm_params['mean']
-        std = norm_params['std']
+        if self.model is None:
+            self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+            self.model.make_predict_function()
+            #from model_files.onnx_helper import ONNXClassifierWrapper
+            #self.model = ONNXClassifierWrapper(MODEL_PATH, target_dtype = np.float32)
+        #norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
+        #mean = norm_params['mean']
+        #std = norm_params['std']
         # Apply normalization
         #iq_comp = (self.iq_values- mean) / std
         #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
 
+        #t1 = time.perf_counter()
         spectrum = self.create_spectrogram(self.iq_values)
+        #t2 = time.perf_counter()
+        #print(f"Create Spectrogram took {(t2 - t1)*1e3:.4f} ms")
         #spectrum = magnitude.reshape(-1, self.FFT_SIZE)
         #iq_comp = (iq_comp - mean) / std
 
-        #print(f"Input dtype: {self.model.input.dtype}")
-        #input_tensor = tf.convert_to_tensor(spectrum, dtype=tf.float32)
         predictions = self.model(spectrum, training=False).numpy()
+        #predictions = self.model.predict(spectrum)
+
     
         # Process predictions
         dapp_logger.info(f"FINISHED PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")

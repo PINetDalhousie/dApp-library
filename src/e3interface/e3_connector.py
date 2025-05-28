@@ -1,6 +1,7 @@
 import struct
 from abc import ABC, abstractmethod
 from enum import Enum
+from scapy.all import sniff, Ether
 import os
 import socket
 import zmq
@@ -11,6 +12,7 @@ from .e3_logging import e3_logger, LOG_DIR, dapp_logger
 class E3LinkLayer(Enum):
     ZMQ = "zmq"
     POSIX = "posix"
+    SCAPY = "scapy"
 
     def __str__(self):
         return self.value
@@ -44,7 +46,8 @@ class E3Connector(ABC):
         (E3LinkLayer.ZMQ, E3TransportLayer.TCP),
         (E3LinkLayer.POSIX, E3TransportLayer.TCP),
         (E3LinkLayer.POSIX, E3TransportLayer.SCTP),
-        (E3LinkLayer.POSIX, E3TransportLayer.IPC)
+        (E3LinkLayer.POSIX, E3TransportLayer.IPC),
+        (E3LinkLayer.SCAPY, E3TransportLayer.SCTP)
     ]
     
     IPC_BASE_DIR = "/tmp/dapps"
@@ -66,6 +69,8 @@ class E3Connector(ABC):
             
         if link_layer == E3LinkLayer.POSIX:
             return POSIXConnector(transport_layer, id)
+        elif link_layer == E3LinkLayer.SCAPY:
+            return SCAPYConnector(transport_layer, id)
         else:
             return ZMQConnector(transport_layer, id)
     
@@ -306,3 +311,31 @@ class POSIXConnector(E3Connector):
             os.remove(self.E3_IPC_SETUP_PATH)    
             os.remove(self.E3_IPC_SOCKET_PATH)    
             os.remove(self.DAPP_IPC_SOCKET_PATH)             
+
+
+class SCAPYConnector(POSIXConnector):
+    def __init__(self, transport_layer, id):
+        super().__init__(transport_layer, id)
+        self.interface = "p0" 
+
+    """
+    def setup_inbound_connection(self):
+        # Instead of a traditional socket, we will set up packet sniffing
+        self.inbound_socket = None  # Placeholder, as we won't use a socket here
+    """
+
+    def receive(self):
+        # Sniff packets from the specified interface
+        packets = sniff(iface=self.interface, count=1)
+        for packet in packets:
+            if Ether in packet:
+                # Process the packet as needed
+                return bytes(packet)  # Return the raw bytes of the packet
+
+    def dispose(self):
+        # No specific disposal needed for packet sniffing
+        pass
+
+    def send(self, payload: bytes, seq_number: int = None):
+        # Use the POSIXConnector's send method
+        super().send(payload, seq_number)
