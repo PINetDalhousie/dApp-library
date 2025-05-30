@@ -15,7 +15,7 @@ import tensorflow as tf
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
-MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_trained_model.keras'
+MODEL_PATH = '/home/ubuntu/dApp/src/model_files/xcept_trained_model.keras'
 NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'xcept_normalization_params.npy')
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Show more TF warnings
@@ -23,8 +23,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 tf.config.run_functions_eagerly(True)
 tf.data.experimental.enable_debug_mode()
-#tf.config.threading.set_inter_op_parallelism_threads(1)
-#tf.config.threading.set_intra_op_parallelism_threads(1)
+tf.config.threading.set_inter_op_parallelism_threads(8)
+tf.config.threading.set_intra_op_parallelism_threads(1)
 #tf.compat.v1.disable_eager_execution()
 
 class XceptDApp(DApp):
@@ -129,6 +129,10 @@ class XceptDApp(DApp):
         #iq_comp = (self.iq_values- mean) / std
         #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
 
+        if(len(self.iq_values) > self.FFT_SIZE):
+            self.iq_values = self.iq_values[:self.FFT_SIZE]
+        if(len(self.iq_values) < self.FFT_SIZE):
+            return
         spectrum = self.create_spectrogram(self.iq_values)
         #spectrum = magnitude.reshape(-1, self.FFT_SIZE)
         #iq_comp = (iq_comp - mean) / std

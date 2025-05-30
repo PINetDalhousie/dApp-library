@@ -106,6 +106,8 @@ class SpectrumSharingDAppMulti(DApp):
         # Create the payload
         size = prb_blk_list.size.to_bytes(2,'little')
         prbs_to_send = prb_new.tobytes(order="C")
+        prbs_to_send = bytes(size)
+        size = b'\x00'
         te = time.time()
         
         # Schedule the delivery
@@ -132,7 +134,6 @@ class SpectrumSharingDAppMulti(DApp):
 
                
         iq_arr = np.frombuffer(data, dtype=np.int16)[:-2]
-        print(iq_arr)
         
         if self.iqPlotterGui:
             self.iq_queue.put(iq_arr)
@@ -146,16 +147,12 @@ class SpectrumSharingDAppMulti(DApp):
             #dapp_logger.debug(f"Shape of iq_comp {iq_comp.shape}")
             abs_iq = np.abs(iq_comp).astype(float)
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
-            print("SUMMING VALUES")
-            print(abs_iq.shape)
             if(len(abs_iq) > self.FFT_SIZE):
                 abs_iq = abs_iq[:self.FFT_SIZE]
             if(len(abs_iq) < self.FFT_SIZE):
                 return
-            print(abs_iq.shape)
             self.abs_iq_av += abs_iq
             self.control_count += 1
-            print("CONTROL")
             #dapp_logger.debug(f"Control count is: {self.control_count}")
 
             if self.control_count == self.Average_over_frames:

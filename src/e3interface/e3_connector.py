@@ -67,7 +67,6 @@ class E3Connector(ABC):
                 f"Must be one of {E3Connector.VALID_CONFIGURATIONS}"
             )
             
-        print("SETUP CONNECTOR")
         if link_layer == E3LinkLayer.POSIX:
             return POSIXConnector(transport_layer, id)
         elif link_layer == E3LinkLayer.SCAPY:
@@ -220,8 +219,6 @@ class POSIXConnector(E3Connector):
             case _:
                 raise ValueError(f'Unknown/Unsupported value for transport layer {transport_layer}')
         
-        print("INITIALIZING POSIX")
-        print(self.setup_endpoint)
         self.transport_layer = transport_layer
         self.id = id
     
@@ -325,7 +322,6 @@ class POSIXConnector(E3Connector):
 
 
 class SCAPYConnector(POSIXConnector):
-    CHUNK_SIZE = 8192
     def __init__(self, transport_layer, id):
         match transport_layer:
             case E3TransportLayer.SCTP | E3TransportLayer.TCP:
@@ -344,6 +340,7 @@ class SCAPYConnector(POSIXConnector):
         self.transport_layer = transport_layer
         self.id = id
         self.interface = "p0" 
+        self.seq_num = 0
 
     def _create_socket(self):
         match self.transport_layer:
@@ -429,11 +426,10 @@ class SCAPYConnector(POSIXConnector):
             if Ether in packet:
                 # Process the packet as needed
                 if(TCP in packet): 
+                    self.seq_num += 1
+                    dapp_logger.info(f"RECEIVED IQs | Thread {self.id} | Sequence Number {self.seq_num}")
                     payload_size = len(bytes(packet[TCP].payload))
-                    print(f"Payload_size {payload_size}")
-                    if(payload_size == 0):
-                        return bytes(10),1
-                    return bytes(packet[TCP].payload),1  # Return the raw bytes of the packet
+                    return bytes(packet[TCP].payload),self.seq_num  # Return the raw bytes of the packet
             return None
 
     def setup_outbound_connection(self):
