@@ -5,6 +5,7 @@ import threading
 from .e3_connector import E3Connector,SCAPYConnector
 from .e3_logging import e3_logger
 import asn1tools
+import time
 
 class E3Interface:
     _instance = None
@@ -64,9 +65,7 @@ class E3Interface:
         """
         Inbound is for all the messages that are coming from the RAN after the initial setup 
         """
-        #e3_logger.info(f'Start inbound connection')
         self.e3_connector.setup_inbound_connection()
-        #e3_logger.info(f'Start inbound loop')
 
         try:
             while not self.stop_event.is_set():
