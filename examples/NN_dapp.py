@@ -33,7 +33,7 @@ def main(args, time_to_wait: float = 500.0):
 
     print(f'Threshold {noise_floor_threshold}')
     
-    dapp = NNDApp(noise_floor_threshold=noise_floor_threshold, id=args.id, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
+    dapp = NNDApp(noise_floor_threshold=noise_floor_threshold, id=args.id, model_deployment=args.model_deployment, model_type=args.model_type, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
                 energyGui=args.energy_gui, iqPlotterGui=args.iq_plotter_gui, dashboard=args.demo_gui)
     dapp.setup_connection()
     
@@ -62,6 +62,8 @@ if __name__ == "__main__":
     parser.add_argument('--demo-gui', action='store_true', default=False, help="Set whether to enable the Demo GUI")
     parser.add_argument('--timed', action='store_true', default=False, help="Run with a 5-minute time limit")
     parser.add_argument('--id', type=str,  default='1', help="Specify dApp ID")
+    parser.add_argument('--model-deployment', type=str,  default='gpu', choices=['cpu','gpu'], help="Specify where Machine Learning model will be deployed. Options are: cpu, gpu")
+    parser.add_argument('--model-type', type=str,  default='tf', choices=['tf','trt', 'tensorlite'], help="Specify the type of machine learning model to be deployed. Options are: tf (Tensorflow), trt (TensorRT), tensorlite (TensorLite)")
 
     args = parser.parse_args()
 

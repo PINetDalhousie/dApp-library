@@ -15,15 +15,12 @@ import tensorflow as tf
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
+from model_files.TFLiteModel import TFLiteModel
 
-MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/trained_model.keras'
-#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/nn_model.engine'
-NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'normalization_params.npy')
-#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+#NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'normalization_params.npy')
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Show more TF warnings
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Force CPU only
-#os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-#tf.config.run_functions_eagerly(True)
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+tf.config.run_functions_eagerly(True)
 #tf.data.experimental.enable_debug_mode()
 #tf.config.threading.set_inter_op_parallelism_threads(8)
 #tf.config.threading.set_intra_op_parallelism_threads(1)
@@ -45,7 +42,7 @@ class NNDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -82,6 +79,21 @@ class NNDApp(DApp):
         # Simulates having multiple dApps running simultaneously
         self.n_threads = 1
 
+
+        # adjust model deployment based on the model type
+        self.model_type = model_type
+        if model_deployment == 'cpu':
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        
+        if self.model_type == 'trt':
+            self.model_path = '/users/grad/boeira/dApp/src/model_files/nn_model.engine'
+        elif self.model_type == 'tensorlite':
+            self.model_path = '/users/grad/boeira/dApp/src/model_files/NN.tflite'
+        else:
+            self.model_path = '/users/grad/boeira/dApp/src/model_files/trained_model.keras'
+
         self.id = id
         print(f"ID {id}")
 
@@ -102,27 +114,31 @@ class NNDApp(DApp):
             #iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
             #classifier = kwargs.get('classifier', None)
             #self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
+
+    def predict(self, iq_data):
+        if self.model is None:
+            if(self.model_type == "tf"):
+                self.model = tf.keras.models.load_model(self.model_path, compile=False)
+            elif(self.model_type == "trt"):
+                from model_files.onnx_helper import ONNXClassifierWrapper
+                self.model = ONNXClassifierWrapper(self.model_path, target_dtype = np.float32)
+            elif(self.model_type == "tensorlite"):
+                self.model = TFLiteModel(self.model_path)
+        
+        if(self.model_type == "tf"):
+            input_tensor = tf.convert_to_tensor(iq_data, dtype=tf.float32)
+            return self.model(input_tensor, training=False).numpy()
+        elif(self.model_type == "trt"):
+            return self.model.predict(iq_data)
+        elif(self.model_type == "tensorlite"):
+            return self.model.predict(iq_data.astype(np.float32))[0]
     
     
     def process_iqs(self, thread_id=0, seq_number=0):
-        if self.model is None:
-            self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-            #from model_files.onnx_helper import ONNXClassifierWrapper
-            #self.model = ONNXClassifierWrapper(MODEL_PATH, target_dtype = np.float32)
-        #norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
-        #mean = norm_params['mean']
-        #std = norm_params['std']
-        # Apply normalization
-        #iq_comp = (self.iq_values- mean) / std
-        #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
-
         magnitude = np.abs(self.iq_values)
         iq_comp = magnitude.reshape(-1, self.FFT_SIZE)
-        #iq_comp = (iq_comp - mean) / std
 
-        #print(f"Input dtype: {self.model.input.dtype}")
-        input_tensor = tf.convert_to_tensor(iq_comp, dtype=tf.float32)
-        predictions = self.model(input_tensor, training=False).numpy()
+        predictions = self.predict(iq_comp)
         #predictions = self.model.predict(iq_comp)
 
         # Process predictions
