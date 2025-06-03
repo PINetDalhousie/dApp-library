@@ -155,7 +155,6 @@ class XceptDApp(DApp):
         elif(self.model_type == "tensorlite"):
             return self.model.predict(spectrum.astype(np.float32))[0]
 
-    
     def process_iqs(self, thread_id=0, seq_number=0):
         spectrum = self.create_spectrogram(self.iq_values)
 
@@ -212,6 +211,10 @@ class XceptDApp(DApp):
             #abs_iq = np.abs(iq_comp).astype(float)
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
             #self.iq_values += abs_iq
+            if(len(iq_comp) > self.FFT_SIZE):
+                iq_comp = self.iq_comp[:self.FFT_SIZE]
+            if(len(iq_comp) < self.FFT_SIZE):
+                return
             self.iq_values += iq_comp
             self.control_count += 1
             #dapp_logger.debug(f"Control count is: {self.control_count}")

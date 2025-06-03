@@ -106,6 +106,8 @@ class SpectrumSharingDAppMulti(DApp):
         # Create the payload
         size = prb_blk_list.size.to_bytes(2,'little')
         prbs_to_send = prb_new.tobytes(order="C")
+        prbs_to_send = bytes(size)
+        size = b'\x00'
         te = time.time()
         
         # Schedule the delivery

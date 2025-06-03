@@ -24,11 +24,6 @@ tf.config.run_functions_eagerly(True)
 #tf.data.experimental.enable_debug_mode()
 #tf.config.threading.set_inter_op_parallelism_threads(8)
 #tf.config.threading.set_intra_op_parallelism_threads(1)
-#tf.compat.v1.disable_eager_execution()
-
-
-#import pycuda.autoinit
-
 
 class NNDApp(DApp):
 
@@ -191,6 +186,10 @@ class NNDApp(DApp):
             #abs_iq = np.abs(iq_comp).astype(float)
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
             #self.iq_values += abs_iq
+            if(len(iq_comp) > self.FFT_SIZE):
+                iq_comp = iq_comp[:self.FFT_SIZE]
+            if(len(iq_comp) < self.FFT_SIZE):
+                return
             self.iq_values += iq_comp
             self.control_count += 1
             #dapp_logger.debug(f"Control count is: {self.control_count}")
