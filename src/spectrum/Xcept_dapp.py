@@ -12,22 +12,16 @@ import threading
 import os
 import tensorflow as tf
 from tensorflow.keras import mixed_precision
+from model_files.TFLiteModel import TFLiteModel
 # np.set_printoptions(threshold=sys.maxsize)
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
 
-MODEL_PATH = '/home/ubuntu/conrado/dApp/src/model_files/xcept_trained_model.keras'
-#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_trained_model.keras'
-#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_model.engine'
-NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'xcept_normalization_params.npy')
-#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Show more TF warnings
-#os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 tf.config.run_functions_eagerly(True)
-tf.data.experimental.enable_debug_mode()
+#tf.data.experimental.enable_debug_mode()
 #tf.config.threading.set_inter_op_parallelism_threads(8)
 #tf.config.threading.set_intra_op_parallelism_threads(8)
 tf.config.optimizer.set_jit(True)
@@ -50,7 +44,7 @@ class XceptDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -86,6 +80,22 @@ class XceptDApp(DApp):
         # Number of threads to be run to process the IQ samples
         # Simulates having multiple dApps running simultaneously
         self.n_threads = 1
+
+        # adjust model deployment based on the model type
+        self.model_type = model_type
+        if model_deployment == 'cpu':
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        
+
+        
+        if self.model_type == 'trt':
+            self.model_path = os.getcwd() + '/src/model_files/xcept_model.engine'
+        elif self.model_type == 'tensorlite':
+            self.model_path = os.getcwd() + '/src/model_files/Xcept.tflite'
+        else:
+            self.model_path = os.getcwd() +  '/src/model_files/xcept_trained_model.keras'
 
         self.id = id
         print(f"ID {id}")
@@ -131,27 +141,27 @@ class XceptDApp(DApp):
         # Return as a batch of one for model compatibility
         return np.array([spec_rgb])
 
-    def process_iqs(self, thread_id=0, seq_number=0):
+    def predict(self, spectrum):
         if self.model is None:
-            self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-            self.model.make_predict_function()
-            #from model_files.onnx_helper import ONNXClassifierWrapper
-            #self.model = ONNXClassifierWrapper(MODEL_PATH, target_dtype = np.float32)
-        #norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
-        #mean = norm_params['mean']
-        #std = norm_params['std']
-        # Apply normalization
-        #iq_comp = (self.iq_values- mean) / std
-        #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
+            if(self.model_type == "tf"):
+                self.model = tf.keras.models.load_model(self.model_path, compile=False)
+            elif(self.model_type == "trt"):
+                from model_files.onnx_helper import ONNXClassifierWrapper
+                self.model = ONNXClassifierWrapper(self.model_path, target_dtype = np.float32)
+            elif(self.model_type == "tensorlite"):
+                self.model = TFLiteModel(self.model_path)
+        
+        if(self.model_type == "tf"):
+            return self.model(spectrum, training=False).numpy()
+        elif(self.model_type == "trt"):
+            return self.model.predict(spectrum)
+        elif(self.model_type == "tensorlite"):
+            return self.model.predict(spectrum.astype(np.float32))[0]
 
+    def process_iqs(self, thread_id=0, seq_number=0):
         spectrum = self.create_spectrogram(self.iq_values)
-        #t2 = time.perf_counter()
-        #print(f"Create Spectrogram took {(t2 - t1)*1e3:.4f} ms")
-        #spectrum = magnitude.reshape(-1, self.FFT_SIZE)
-        #iq_comp = (iq_comp - mean) / std
 
-        predictions = self.model(spectrum, training=False).numpy()
-        #predictions = self.model.predict(spectrum)
+        predictions = self.predict(spectrum)  # Updated to call the predict method directly
 
     
         # Process predictions
