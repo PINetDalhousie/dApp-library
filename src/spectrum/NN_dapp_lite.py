@@ -5,40 +5,45 @@ dApp for Spectrum Sharing
 
 __author__ = "Conrado Boeira"
 
-import multiprocessing
+#import multiprocessing
 import time
 import numpy as np
 import threading
 import os
 import tensorflow as tf
-from tensorflow.keras import mixed_precision
 # np.set_printoptions(threshold=sys.maxsize)
 
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
-
-MODEL_PATH = '/home/ubuntu/conrado/dApp/src/model_files/xcept_trained_model.keras'
-#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_trained_model.keras'
-#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_model.engine'
-NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'xcept_normalization_params.npy')
+MODEL_PATH = '/home/ubuntu/conrado/dApp/src/model_files/NN.tflite'
+#MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/nn_model.engine'
+NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'normalization_params.npy')
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Show more TF warnings
-#os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU only
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
-tf.config.run_functions_eagerly(True)
-tf.data.experimental.enable_debug_mode()
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Force CPU only
+#os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+#tf.config.run_functions_eagerly(True)
+#tf.data.experimental.enable_debug_mode()
 #tf.config.threading.set_inter_op_parallelism_threads(8)
-#tf.config.threading.set_intra_op_parallelism_threads(8)
-tf.config.optimizer.set_jit(True)
+#tf.config.threading.set_intra_op_parallelism_threads(1)
+from ai_edge_litert.interpreter import Interpreter
 
-# Set the global policy. Do this early in your script.
-# For inference, 'mixed_float16' is typically what you want.
-# If you were training, you'd also handle optimizer scaling.
-#policy = mixed_precision.Policy('mixed_float16')
-#mixed_precision.set_global_policy(policy)
+class TFLiteModel:
+    def __init__(self, model_path: str):
+        self.interpreter = Interpreter(model_path)
+        self.interpreter.allocate_tensors()
 
-class XceptDApp(DApp):
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+
+    def predict(self, *data_args):
+        assert len(data_args) == len(self.input_details)
+        for data, details in zip(data_args, self.input_details):
+            self.interpreter.set_tensor(details["index"], data)
+        self.interpreter.invoke()
+        return self.interpreter.get_tensor(self.output_details[0]["index"])
+
+class NNDApp(DApp):
 
     ###  Configuration ###
     # gNB runs with BW = 40 MHz, with -E (3/4 sampling)
@@ -58,7 +63,7 @@ class XceptDApp(DApp):
         self.First_carrier_offset = 900
         self.Num_car_prb = 12
         self.prb_thrs = 75 # This avoids blacklisting PRBs where the BWP is scheduled (it’s a workaround bc the UE and gNB would not be able to communicate anymore, a cleaner fix is to move the BWP if needed or things like that)
-        self.FFT_SIZE = 1536
+        self.FFT_SIZE = 1536  
         self.Average_over_frames = 63
         self.noise_floor_threshold = noise_floor_threshold
         self.save_iqs = save_iqs
@@ -77,9 +82,9 @@ class XceptDApp(DApp):
         self.control_count = 1
         self.iq_values = np.zeros(self.FFT_SIZE, dtype=np.complex128)
 
-        tf.keras.backend.clear_session()
-
+        #tf.keras.backend.clear_session()
         self.model = None
+        #self.model.make_predict_function()
         #self.graph = tf.get_default_graph()
 
 
@@ -92,68 +97,36 @@ class XceptDApp(DApp):
 
         if self.energyGui:
             from visualization.energy import EnergyPlotter
-            self.sig_queue = multiprocessing.Queue() 
-            self.energyPlotter = EnergyPlotter(self.FFT_SIZE, bw=self.bw, center_freq=self.center_freq) 
+            #self.sig_queue = multiprocessing.Queue() 
+            #self.energyPlotter = EnergyPlotter(self.FFT_SIZE, bw=self.bw, center_freq=self.center_freq) 
 
         if self.iqPlotterGui:
             from visualization.iq import IQPlotter
-            self.iq_queue = multiprocessing.Queue() 
-            iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
-            self.iqPlotter = IQPlotter(buffer_size=500, iq_size=iq_size, bw=self.bw, center_freq=self.center_freq)    
+            #self.iq_queue = multiprocessing.Queue() 
+            #iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
+            #self.iqPlotter = IQPlotter(buffer_size=500, iq_size=iq_size, bw=self.bw, center_freq=self.center_freq)    
 
         if self.dashboard:
             from visualization.dashboard import Dashboard
-            self.demo_queue = multiprocessing.Queue()
-            iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
-            classifier = kwargs.get('classifier', None)
-            self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
-
-    def create_spectrogram(self, iq_samples):
-        """Convert a single chunk of IQ samples to a spectrogram."""
-        from scipy import signal
-        
-        # No need to extract I and Q separately as we'll process the complex samples directly
-        
-        # Generate single spectrogram
-        
-        # Create spectrogram using scipy.signal
-        f, t, Sxx = signal.spectrogram(iq_samples, nperseg=71, noverlap=64)
-        
-        # Convert to dB scale
-        Sxx_db = 10 * np.log10(Sxx + 1e-10)  # Add small value to avoid log(0)
-        
-        # Normalize to [0, 1] range
-        Sxx_norm = (Sxx_db - np.min(Sxx_db)) / (np.max(Sxx_db) - np.min(Sxx_db) + 1e-10)
-        
-        # Create 3-channel RGB image by duplicating the spectrogram
-        spec_rgb = np.stack([Sxx_norm, Sxx_norm, Sxx_norm], axis=-1)
-        
-        # Return as a batch of one for model compatibility
-        return np.array([spec_rgb])
-
+            #self.demo_queue = multiprocessing.Queue()
+            #iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
+            #classifier = kwargs.get('classifier', None)
+            #self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
+    
+    
     def process_iqs(self, thread_id=0, seq_number=0):
         if self.model is None:
-            self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-            self.model.make_predict_function()
-            #from model_files.onnx_helper import ONNXClassifierWrapper
-            #self.model = ONNXClassifierWrapper(MODEL_PATH, target_dtype = np.float32)
-        #norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
-        #mean = norm_params['mean']
-        #std = norm_params['std']
-        # Apply normalization
-        #iq_comp = (self.iq_values- mean) / std
-        #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
+            self.model = TFLiteModel(MODEL_PATH)
 
-        spectrum = self.create_spectrogram(self.iq_values)
-        #t2 = time.perf_counter()
-        #print(f"Create Spectrogram took {(t2 - t1)*1e3:.4f} ms")
-        #spectrum = magnitude.reshape(-1, self.FFT_SIZE)
+        magnitude = np.abs(self.iq_values)
+        iq_comp = magnitude.reshape(-1, self.FFT_SIZE)
         #iq_comp = (iq_comp - mean) / std
 
-        predictions = self.model(spectrum, training=False).numpy()
-        #predictions = self.model.predict(spectrum)
+        #print(f"Input dtype: {self.model.input.dtype}")
+        input_tensor = tf.convert_to_tensor(iq_comp, dtype=tf.float32)
+        predictions = self.model.predict(input_tensor)[0]
+        #predictions = self.model.predict(iq_comp)
 
-    
         # Process predictions
         dapp_logger.info(f"FINISHED PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
 
@@ -205,7 +178,7 @@ class XceptDApp(DApp):
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
             #self.iq_values += abs_iq
             if(len(iq_comp) > self.FFT_SIZE):
-                iq_comp= iq_comp[:self.FFT_SIZE]
+                iq_comp = iq_comp[:self.FFT_SIZE]
             if(len(iq_comp) < self.FFT_SIZE):
                 return
             self.iq_values += iq_comp

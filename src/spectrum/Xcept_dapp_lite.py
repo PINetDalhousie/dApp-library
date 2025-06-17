@@ -17,7 +17,7 @@ from tensorflow.keras import mixed_precision
 from dapp.dapp import DApp
 from e3interface.e3_logging import dapp_logger, LOG_DIR
 
-MODEL_PATH = '/home/ubuntu/conrado/dApp/src/model_files/xcept_trained_model.keras'
+MODEL_PATH = '/home/ubuntu/conrado/dApp/src/model_files/Xcept.tflite'
 #MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_trained_model.keras'
 #MODEL_PATH = '/users/grad/boeira/dApp/src/model_files/xcept_model.engine'
 NORMALIZATION_PARAMS_PATH = os.path.join(os.path.dirname(MODEL_PATH), 'xcept_normalization_params.npy')
@@ -37,6 +37,23 @@ tf.config.optimizer.set_jit(True)
 # If you were training, you'd also handle optimizer scaling.
 #policy = mixed_precision.Policy('mixed_float16')
 #mixed_precision.set_global_policy(policy)
+
+from ai_edge_litert.interpreter import Interpreter
+
+class TFLiteModel:
+    def __init__(self, model_path: str):
+        self.interpreter = Interpreter(model_path)
+        self.interpreter.allocate_tensors()
+
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+
+    def predict(self, *data_args):
+        assert len(data_args) == len(self.input_details)
+        for data, details in zip(data_args, self.input_details):
+            self.interpreter.set_tensor(details["index"], data)
+        self.interpreter.invoke()
+        return self.interpreter.get_tensor(self.output_details[0]["index"])
 
 class XceptDApp(DApp):
 
@@ -133,16 +150,7 @@ class XceptDApp(DApp):
 
     def process_iqs(self, thread_id=0, seq_number=0):
         if self.model is None:
-            self.model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-            self.model.make_predict_function()
-            #from model_files.onnx_helper import ONNXClassifierWrapper
-            #self.model = ONNXClassifierWrapper(MODEL_PATH, target_dtype = np.float32)
-        #norm_params = np.load(NORMALIZATION_PARAMS_PATH, allow_pickle=True).item()
-        #mean = norm_params['mean']
-        #std = norm_params['std']
-        # Apply normalization
-        #iq_comp = (self.iq_values- mean) / std
-        #iq_comp = iq_comp.reshape(-1, self.FFT_SIZE)
+            self.model = TFLiteModel(MODEL_PATH)
 
         spectrum = self.create_spectrogram(self.iq_values)
         #t2 = time.perf_counter()
@@ -150,7 +158,7 @@ class XceptDApp(DApp):
         #spectrum = magnitude.reshape(-1, self.FFT_SIZE)
         #iq_comp = (iq_comp - mean) / std
 
-        predictions = self.model(spectrum, training=False).numpy()
+        predictions = self.model.predict(spectrum.astype(np.float32))[0]
         #predictions = self.model.predict(spectrum)
 
     

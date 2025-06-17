@@ -72,7 +72,7 @@ class E3Interface:
                 data, seq_number = self.e3_connector.receive()
                 if not data:
                     e3_logger.error(f'No data received, connection closed, end')
-                    break
+                    #break
                 #e3_logger.info(f'Received data size: {len(data)}')
                 #e3_logger.debug(data.hex()[:100])
                 #print("RECEIVED")
