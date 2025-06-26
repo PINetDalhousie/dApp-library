@@ -9,7 +9,7 @@ import os
 import time
 
 from e3interface.e3_connector import E3LinkLayer, E3TransportLayer
-from spectrum.NN_dapp import NNDApp
+from spectrum.NN_dapp_lite import NNDApp
 
 LOG_DIR = ('.' if os.geteuid() != 0 else '') + '/logs/'
 
