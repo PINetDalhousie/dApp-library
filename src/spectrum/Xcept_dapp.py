@@ -43,7 +43,7 @@ class XceptDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, input_size: int = 1536, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -51,7 +51,10 @@ class XceptDApp(DApp):
         self.First_carrier_offset = 900
         self.Num_car_prb = 12
         self.prb_thrs = 75 # This avoids blacklisting PRBs where the BWP is scheduled (it’s a workaround bc the UE and gNB would not be able to communicate anymore, a cleaner fix is to move the BWP if needed or things like that)
-        self.FFT_SIZE = 1536
+        self.FFT_SIZE = input_size
+        print(f"FFT_SIZE: {self.FFT_SIZE}")
+        self.downsample_rate = 1536//self.FFT_SIZE
+        print(f"Downsample rate: {self.downsample_rate}")
         self.Average_over_frames = 63
         self.noise_floor_threshold = noise_floor_threshold
         self.save_iqs = save_iqs

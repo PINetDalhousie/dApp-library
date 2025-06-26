@@ -33,7 +33,7 @@ def main(args, time_to_wait: float = 500.0):
 
     print(f'Threshold {noise_floor_threshold}')
     
-    dapp = FFTDApp(noise_floor_threshold=noise_floor_threshold, id=args.id, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
+    dapp = FFTDApp(noise_floor_threshold=noise_floor_threshold, id=args.id, input_size=args.input_size, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
                 energyGui=args.energy_gui, iqPlotterGui=args.iq_plotter_gui, dashboard=args.demo_gui)
     dapp.setup_connection()
     
@@ -62,6 +62,8 @@ if __name__ == "__main__":
     parser.add_argument('--demo-gui', action='store_true', default=False, help="Set whether to enable the Demo GUI")
     parser.add_argument('--timed', action='store_true', default=False, help="Run with a 5-minute time limit")
     parser.add_argument('--id', type=str,  default='1', help="Specify dApp ID")
+    parser.add_argument('--input-size', type=int, default=1536, choices=[384, 768, 1536, 2048], 
+                        help="Specify I/Q samples input size for the dApp")
 
     args = parser.parse_args()
 
