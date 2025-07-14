@@ -27,7 +27,7 @@ class FFTDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, input_size: int = 1536, noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, input_size: int = 1536, output_size: int = 0, noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -56,6 +56,8 @@ class FFTDApp(DApp):
 
         self.control_count = 1
         self.abs_iq_av = np.zeros(self.FFT_SIZE)
+
+        self.output_size = output_size
 
 
         # Number of threads to be run to process the IQ samples
@@ -89,11 +91,19 @@ class FFTDApp(DApp):
         dapp_logger.info(f"FINISHED PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
 
         # Create the payload
-        size = fft_magnitude.size.to_bytes(2,'little')
-        prbs_to_send = fft_magnitude.tobytes(order="C")
+        #size = fft_magnitude.size.to_bytes(2,'little')
+        #prbs_to_send = fft_magnitude.tobytes(order="C")
         
         #size = b'4'
         #prbs_to_send = b'0000'
+
+        # Create the payload
+        if(self.output_size < 0):
+            size = fft_magnitude.size.to_bytes(2,'little')
+            prbs_to_send = b'\x00' * fft_magnitude.size
+        else:
+            size = self.output_size.to_bytes(2,'big')
+            prbs_to_send = b'\x00'* self.output_size
 
         # Schedule the delivery
         dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")
@@ -129,10 +139,6 @@ class FFTDApp(DApp):
         if self.control:
             #dapp_logger.debug("Start control operations")
             iq_comp = iq_arr[::2] + iq_arr[1::2] * 1j
-            print(self.downsample_rate)
-            if(self.downsample_rate > 1):
-                iq_comp = decimate(iq_comp, self.downsample_rate)
-                print(f"Downsampled I/Q samples to {self.downsample_rate} rate, new shape: {iq_comp.shape}")
             #dapp_logger.debug(f"Shape of iq_comp {iq_comp.shape}")
             #abs_iq = np.abs(iq_comp).astype(float)
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")

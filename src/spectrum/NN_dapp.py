@@ -38,7 +38,7 @@ class NNDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, input_size: int = 1536, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, input_size: int = 1536, output_size: int = -1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -47,6 +47,7 @@ class NNDApp(DApp):
         self.Num_car_prb = 12
         self.prb_thrs = 75 # This avoids blacklisting PRBs where the BWP is scheduled (it’s a workaround bc the UE and gNB would not be able to communicate anymore, a cleaner fix is to move the BWP if needed or things like that)
         self.FFT_SIZE = input_size
+        self.output_size = output_size
         self.downsample_rate = 1536//self.FFT_SIZE
         self.Average_over_frames = 63
         self.noise_floor_threshold = noise_floor_threshold
@@ -86,11 +87,11 @@ class NNDApp(DApp):
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         
         if self.model_type == 'trt':
-            self.model_path = '/users/grad/boeira/dApp/src/model_files/nn_model.engine'
+            self.model_path = os.getcwd() + f"/src/model_files/NN-input-size-{input_size}/Xcept.engine"
         elif self.model_type == 'tensorlite':
-            self.model_path = '/users/grad/boeira/dApp/src/model_files/NN.tflite'
+            self.model_path = os.getcwd() + f"/src/model_files/NN-input-size-{input_size}/model.tflite"
         else:
-            self.model_path = '/users/grad/boeira/dApp/src/model_files/trained_model.keras'
+            self.model_path = os.getcwd() + f"/src/model_files/NN-input-size-{input_size}/nn_trained_model.keras"
 
         self.id = id
         print(f"ID {id}")
@@ -144,11 +145,12 @@ class NNDApp(DApp):
 
         binary_predictions = (predictions > 0.5).astype(int)
         # Create the payload
-        size = binary_predictions.size.to_bytes(2,'little')
-        prbs_to_send = b'\x00' * binary_predictions.size
-        
-        size = b'\x00'
-        #prbs_to_send = b'\x00\x00\x00\x00'
+        if(self.output_size < 0):
+            size = binary_predictions.size.to_bytes(2,'little')
+            prbs_to_send = b'\x00' * binary_predictions.size
+        else:
+            size = self.output_size.to_bytes(2,'big')
+            prbs_to_send = b'\x00'* self.output_size
 
         # Schedule the delivery
         dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")
@@ -173,8 +175,7 @@ class NNDApp(DApp):
         dapp_logger.info(f"PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
 
         iq_arr = np.frombuffer(data, dtype=np.int16)[:-2]
-        print(iq_arr.shape)
-        if(self.downsample_rate > 1): print(f"downsampled iqs {decimate(iq_arr, self.downsample_rate).shape}")
+        #iq_arr = decimate(iq_arr, self.downsample_rate) if self.downsample_rate > 1 else iq_arr
         
         if self.iqPlotterGui:
             self.iq_queue.put(iq_arr)
@@ -191,10 +192,10 @@ class NNDApp(DApp):
             #abs_iq = np.abs(iq_comp).astype(float)
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
             #self.iq_values += abs_iq
-            if(len(iq_comp) > self.FFT_SIZE):
-                iq_comp = iq_comp[:self.FFT_SIZE]
-            if(len(iq_comp) < self.FFT_SIZE):
-                return
+            #if(len(iq_comp) > self.FFT_SIZE):
+            #    iq_comp = iq_comp[:self.FFT_SIZE]
+            #if(len(iq_comp) < self.FFT_SIZE):
+            #    return
             self.iq_values += iq_comp
             self.control_count += 1
             #dapp_logger.debug(f"Control count is: {self.control_count}")

@@ -13,6 +13,7 @@ import os
 import tensorflow as tf
 from tensorflow.keras import mixed_precision
 from model_files.TFLiteModel import TFLiteModel
+from scipy.signal import decimate
 # np.set_printoptions(threshold=sys.maxsize)
 
 from dapp.dapp import DApp
@@ -94,11 +95,11 @@ class XceptDApp(DApp):
 
         
         if self.model_type == 'trt':
-            self.model_path = os.getcwd() + '/src/model_files/xcept_model.engine'
+            self.model_path = os.getcwd() + f"/src/model_files/Xcept-input-size-{input_size}/xcept_model.engine"
         elif self.model_type == 'tensorlite':
-            self.model_path = os.getcwd() + '/src/model_files/Xcept.tflite'
+            self.model_path = os.getcwd() + f"/src/model_files/Xcept-input-size-{input_size}/model.tflite"
         else:
-            self.model_path = os.getcwd() +  '/src/model_files/xcept_trained_model.keras'
+            self.model_path = os.getcwd() +  f"/src/model_files/Xcept-input-size-{input_size}/xcept_trained_model.keras"
 
         self.id = id
         print(f"ID {id}")
@@ -120,6 +121,43 @@ class XceptDApp(DApp):
             iq_size = self.FFT_SIZE * 2 # double the size of ofdm_symbol_size since real and imaginary parts are interleaved
             classifier = kwargs.get('classifier', None)
             self.demo = Dashboard(buffer_size=100, iq_size=iq_size, classifier=classifier) 
+    
+
+    def format_input(self, iq_samples):
+        # For Xception, we need at least 71x71 dimensions
+        # Extract I and Q components
+        I = np.real(iq_samples)
+        Q = np.imag(iq_samples)
+        
+        # Reshape data to meet Xception requirements
+        # Method 1: Reshape and resize
+        height = 71
+        width = 71
+        
+        reshaped_data = []
+        magnitude = np.abs(iq_samples)
+            
+            # Reshape to square format first (e.g., 39x39 for 1536 samples)
+        initial_dim = int(np.sqrt(len(iq_samples)))  # Updated to use len(iq_samples[i])
+        I_initial = I[:initial_dim**2].reshape(initial_dim, initial_dim)
+        Q_initial = Q[:initial_dim**2].reshape(initial_dim, initial_dim)
+        mag_initial = magnitude[:initial_dim**2].reshape(initial_dim, initial_dim)
+        
+        # Resize to 71x71 using OpenCV or scipy
+        from scipy.ndimage import zoom
+        zoom_factor = 71 / initial_dim
+        
+        I_resized = zoom(I_initial, zoom_factor, order=1)
+        Q_resized = zoom(Q_initial, zoom_factor, order=1)
+        mag_resized = zoom(mag_initial, zoom_factor, order=1)
+        
+        # Stack as channels
+        sample = np.stack([I_resized, Q_resized, mag_resized], axis=-1)
+        
+        # Normalize to [0, 1]
+        sample = (sample - np.min(sample)) / (np.max(sample) - np.min(sample) + 1e-10)
+            
+        return np.array([sample])
 
     def create_spectrogram(self, iq_samples):
         """Convert a single chunk of IQ samples to a spectrogram."""
@@ -162,7 +200,8 @@ class XceptDApp(DApp):
             return self.model.predict(spectrum.astype(np.float32))[0]
 
     def process_iqs(self, thread_id=0, seq_number=0):
-        spectrum = self.create_spectrogram(self.iq_values)
+        #spectrum = self.create_spectrogram(self.iq_values)
+        spectrum = self.format_input(self.iq_values)
 
         predictions = self.predict(spectrum)  # Updated to call the predict method directly
 
@@ -201,6 +240,7 @@ class XceptDApp(DApp):
         dapp_logger.info(f"PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
 
         iq_arr = np.frombuffer(data, dtype=np.int16)[:-2]
+        iq_arr = decimate(iq_arr, self.downsample_rate)
         
         if self.iqPlotterGui:
             self.iq_queue.put(iq_arr)
@@ -217,10 +257,10 @@ class XceptDApp(DApp):
             #abs_iq = np.abs(iq_comp).astype(float)
             #dapp_logger.debug(f"After iq division self.abs_iq_av: {self.abs_iq_av.shape} abs_iq: {abs_iq.shape}")
             #self.iq_values += abs_iq
-            if(len(iq_comp) > self.FFT_SIZE):
-                iq_comp= iq_comp[:self.FFT_SIZE]
-            if(len(iq_comp) < self.FFT_SIZE):
-                return
+            # if(len(iq_comp) > self.FFT_SIZE):
+            #     iq_comp= iq_comp[:self.FFT_SIZE]
+            # if(len(iq_comp) < self.FFT_SIZE):
+            #     return
             self.iq_values += iq_comp
             self.control_count += 1
             #dapp_logger.debug(f"Control count is: {self.control_count}")
