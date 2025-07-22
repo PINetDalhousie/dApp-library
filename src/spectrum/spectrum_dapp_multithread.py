@@ -26,7 +26,7 @@ class SpectrumSharingDAppMulti(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, noise_floor_threshold: int = 53, input_size: int = 1536, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'uds', **kwargs):
+    def __init__(self, id: int = 1, noise_floor_threshold: int = 53, input_size: int = 1536, output_size: int = 0, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'uds', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -36,8 +36,8 @@ class SpectrumSharingDAppMulti(DApp):
         self.prb_thrs = 75 # This avoids blacklisting PRBs where the BWP is scheduled (it’s a workaround bc the UE and gNB would not be able to communicate anymore, a cleaner fix is to move the BWP if needed or things like that)
         self.FFT_SIZE = input_size
         print(f"FFT_SIZE: {self.FFT_SIZE}")
-        self.downsample_rate = 1536//self.FFT_SIZE
-        print(f"Downsample rate: {self.downsample_rate}")
+        #self.downsample_rate = 1536//self.FFT_SIZE
+        #print(f"Downsample rate: {self.downsample_rate}")
         self.Average_over_frames = 63
         self.noise_floor_threshold = noise_floor_threshold
         self.save_iqs = save_iqs
@@ -56,6 +56,7 @@ class SpectrumSharingDAppMulti(DApp):
         self.control_count = 1
         self.abs_iq_av = np.zeros(self.FFT_SIZE)
 
+        self.output_size = output_size
 
         # Number of threads to be run to process the IQ samples
         # Simulates having multiple dApps running simultaneously
@@ -107,11 +108,16 @@ class SpectrumSharingDAppMulti(DApp):
         prb_new = prb_blk_list.view(prb_blk_list.dtype.newbyteorder('>'))
         
         # Create the payload
-        size = prb_blk_list.size.to_bytes(2,'little')
-        prbs_to_send = prb_new.tobytes(order="C")
-        prbs_to_send = bytes(size)
-        size = b'\x00'
-        te = time.time()
+        #size = prb_blk_list.size.to_bytes(2,'little')
+        #prbs_to_send = prb_new.tobytes(order="C")
+        #prbs_to_send = bytes(size)
+        if(self.output_size < 0):
+            size = prb_blk_list.size.to_bytes(2,'little')
+            prbs_to_send = b'\x00' * prb_blk_list.size
+        else:
+            size = self.output_size.to_bytes(2,'big')
+            prbs_to_send = b'\x00' * self.output_size
+
         
         # Schedule the delivery
         dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")

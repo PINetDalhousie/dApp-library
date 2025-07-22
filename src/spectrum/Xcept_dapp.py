@@ -45,7 +45,7 @@ class XceptDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, input_size: int = 1536, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, input_size: int = 1536, output_size: int = -1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -80,6 +80,8 @@ class XceptDApp(DApp):
         self.model = None
         #self.graph = tf.get_default_graph()
 
+        self.output_size = output_size
+
 
         # Number of threads to be run to process the IQ samples
         # Simulates having multiple dApps running simultaneously
@@ -95,7 +97,7 @@ class XceptDApp(DApp):
 
         
         if self.model_type == 'trt':
-            self.model_path = os.getcwd() + f"/src/model_files/Xcept-input-size-{input_size}/xcept_model.engine"
+            self.model_path = os.getcwd() + f"/src/model_files/Xcept-input-size-{input_size}/Xcept.engine"
         elif self.model_type == 'tensorlite':
             self.model_path = os.getcwd() + f"/src/model_files/Xcept-input-size-{input_size}/model.tflite"
         else:
@@ -211,11 +213,13 @@ class XceptDApp(DApp):
 
         binary_predictions = (predictions > 0.5).astype(int)
         # Create the payload
-        size = binary_predictions.size.to_bytes(2,'little')
-        prbs_to_send = b'\x00' * binary_predictions.size
-        
-        size = b'\x00'
-        #prbs_to_send = b'\x00\x00\x00\x00'
+        if(self.output_size < 0):
+            size = binary_predictions.size.to_bytes(2,'little')
+            prbs_to_send = b'\x00' * binary_predictions.size
+        else:
+            size = self.output_size.to_bytes(2,'big')
+            prbs_to_send = b'\x00'* self.output_size
+
 
         # Schedule the delivery
         dapp_logger.info(f"FINISHED CREATING CONTROL | Thread {self.id} | Sequence Number {seq_number}")
@@ -240,7 +244,6 @@ class XceptDApp(DApp):
         dapp_logger.info(f"PROCESSING IQs | Thread {self.id} | Sequence Number {seq_number}")
 
         iq_arr = np.frombuffer(data, dtype=np.int16)[:-2]
-        iq_arr = decimate(iq_arr, self.downsample_rate)
         
         if self.iqPlotterGui:
             self.iq_queue.put(iq_arr)

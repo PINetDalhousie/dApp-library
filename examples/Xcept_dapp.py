@@ -33,8 +33,11 @@ def main(args, time_to_wait: float = 500.0):
 
     print(f'Threshold {noise_floor_threshold}')
     
-    dapp = XceptDApp(noise_floor_threshold=noise_floor_threshold, id=args.id, input_size=args.input_size, model_deployment=args.model_deployment, model_type=args.model_type, save_iqs=args.save_iqs, control=args.control, link=args.link, transport=args.transport,
-                energyGui=args.energy_gui, iqPlotterGui=args.iq_plotter_gui, dashboard=args.demo_gui)
+    dapp = XceptDApp(noise_floor_threshold=noise_floor_threshold, id=args.id, input_size=args.input_size, 
+                     output_size=args.output_size, model_deployment=args.model_deployment, 
+                     model_type=args.model_type, save_iqs=args.save_iqs, control=args.control, link=args.link, 
+                     transport=args.transport, energyGui=args.energy_gui, iqPlotterGui=args.iq_plotter_gui, 
+                     dashboard=args.demo_gui)
     dapp.setup_connection()
     
     if args.timed:
@@ -66,6 +69,7 @@ if __name__ == "__main__":
     parser.add_argument('--model-type', type=str,  default='tf', choices=['tf','trt', 'tensorlite'], help="Specify the type of machine learning model to be deployed. Options are: tf (Tensorflow), trt (TensorRT), tensorlite (TensorLite)")
     parser.add_argument('--input-size', type=int, default=1536, choices=[384, 768, 1536, 2048], 
                         help="Specify I/Q samples input size for the dApp")
+    parser.add_argument('--output-size', type=int,  default=-1, help="Specify output size for the dApp")
 
     args = parser.parse_args()
 
