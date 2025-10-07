@@ -379,6 +379,10 @@ class SCAPYConnector(POSIXConnector):
     
     def setup_inbound_connection(self):
         self.inbound_socket = self._create_socket()
+
+        self.inbound_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.inbound_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        
         self.inbound_socket.bind(self.inbound_endpoint)
         self.inbound_socket.listen(5)        
         self.inbound_connection, _ = self.inbound_socket.accept()

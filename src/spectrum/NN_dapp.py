@@ -38,7 +38,7 @@ class NNDApp(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, input_size: int = 1536, output_size: int = -1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
+    def __init__(self, id: int = 1, input_rate: int = 63, input_size: int = 1536, output_size: int = -1, model_deployment: str = 'gpu', model_type: str = 'tf', noise_floor_threshold: int = 53, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'udc', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -49,7 +49,7 @@ class NNDApp(DApp):
         self.FFT_SIZE = input_size
         self.output_size = output_size
         self.downsample_rate = 1536//self.FFT_SIZE
-        self.Average_over_frames = 63
+        self.Average_over_frames = input_rate
         self.noise_floor_threshold = noise_floor_threshold
         self.save_iqs = save_iqs
         self.e3_interface.add_callback(self.get_iqs_from_ran)

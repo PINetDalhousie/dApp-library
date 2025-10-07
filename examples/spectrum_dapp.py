@@ -34,7 +34,7 @@ def main(args, time_to_wait: float = 500.0):
     print(f'Threshold {noise_floor_threshold}')
     
     dapp = SpectrumSharingDAppMulti(noise_floor_threshold=noise_floor_threshold, id=args.id, 
-                                    input_size=args.input_size, output_size=args.output_size, 
+                                    input_rate=args.input_rate, input_size=args.input_size, output_size=args.output_size, 
                                     save_iqs=args.save_iqs, control=args.control, link=args.link, 
                                     transport=args.transport, energyGui=args.energy_gui, 
                                     iqPlotterGui=args.iq_plotter_gui, dashboard=args.demo_gui)
@@ -68,6 +68,7 @@ if __name__ == "__main__":
     parser.add_argument('--input-size', type=int, default=1536, choices=[384, 768, 1536, 2048], 
                         help="Specify I/Q samples input size for the dApp")
     parser.add_argument('--output-size', type=int,  default=-1, help="Specify output size for the dApp")
+    parser.add_argument('--input-rate', type=int,  default=63, help="Specify input rate for the dApp")
 
     args = parser.parse_args()
 

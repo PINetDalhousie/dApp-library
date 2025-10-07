@@ -26,7 +26,7 @@ class SpectrumSharingDAppMulti(DApp):
     # Noise floor threshold needs to be calibrated
     # We receive the symbols and average them over some frames, and do thresholding.
 
-    def __init__(self, id: int = 1, noise_floor_threshold: int = 53, input_size: int = 1536, output_size: int = 0, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'uds', **kwargs):
+    def __init__(self, id: int = 1, noise_floor_threshold: int = 53, input_rate: int = 63, input_size: int = 1536, output_size: int = 0, save_iqs: bool = False, control: bool = False, link: str = 'posix', transport:str = 'uds', **kwargs):
         super().__init__(link=link, transport=transport, id=int(id), **kwargs) 
 
         self.bw = 40.08e6  # Bandwidth in Hz
@@ -38,7 +38,7 @@ class SpectrumSharingDAppMulti(DApp):
         print(f"FFT_SIZE: {self.FFT_SIZE}")
         #self.downsample_rate = 1536//self.FFT_SIZE
         #print(f"Downsample rate: {self.downsample_rate}")
-        self.Average_over_frames = 63
+        self.Average_over_frames = input_rate
         self.noise_floor_threshold = noise_floor_threshold
         self.save_iqs = save_iqs
         self.e3_interface.add_callback(self.get_iqs_from_ran)
