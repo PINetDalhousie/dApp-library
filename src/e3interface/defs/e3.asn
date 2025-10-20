@@ -1,7 +1,7 @@
 E3 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
     E3-SetupRequest ::= SEQUENCE {
-        ranIdentifier         INTEGER (0..15),
+        ranIdentifier         INTEGER (0..31),
         ranFunctionsList      SEQUENCE OF INTEGER (0..255)
     }
 
