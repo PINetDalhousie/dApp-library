@@ -1,5 +1,7 @@
 # dApp Library
 
+Fork from  original [dApp-library](https://github.com/wineslab/dApp-library), with extra applications and some extra parameters for testing.
+
 A complete tutorial on how to deploy a dApp can be found on the [OpenRAN Gym website](https://openrangym.com/tutorials/dapps-oai). Please refer to that guide to instrument your system.
 
 ## Installation
@@ -28,15 +30,8 @@ The dApp can be controlled through the following command-line arguments:
 - `iq-plotter-gui` bool (false): If set to true, creates and show the sensed spectrum
 - `save-iqs` bool (false): Specify if this is data collection run or not. In the first case I/Q samples will be saved
 - `timed` bool (false): Run with a 5-minute time limit
+- `timed` int (1): ID of the existing dApp
+- `model-deployment` str ("gpu"): Specify if the model is intended to be run on GPU or CPU
+- `model-type` str ("tf"): Specify runtime option for model (standard Tensorflow, TensorRT, LiteRT)
+- `input-size` int (1536): size of I/Q samples expected
 
-
-If you use the dApp concept and/or the framework to develop your own dApps, please cite the following paper:
-
-```text
-@ARTICLE{lacava2025dApps,
-author={Andrea Lacava and Leonardo Bonati and Niloofar Mohamadi and Rajeev Gangula and Florian Kaltenberger and Pedram Johari and Salvatore D'Oro and Francesca Cuomo and Michele Polese and Tommaso Melodia},
-title: {dApps: Enabling Real-Time AI-Based Open RAN Control},
-url={https://arxiv.org/pdf/2501.16502},
-year={2025}
-}
-```
